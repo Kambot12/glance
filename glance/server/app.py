@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import logging
+from collections.abc import Callable
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -52,11 +53,25 @@ def origin_allowed(origin: str | None, allowed: set[str]) -> bool:
 
 
 class Hub:
-    """Fan-out to every connected web view."""
+    """Fan-out to every connected web view, and to any local sinks (the HUD)."""
 
     def __init__(self) -> None:
         self._conns: set[WebSocket] = set()
+        self._sinks: list[Callable[[dict], None]] = []
         self._lock = asyncio.Lock()
+
+    def add_sink(self, fn: "Callable[[dict], None]") -> None:
+        """Register an in-process listener, i.e. the HUD.
+
+        A sink is called on the event loop thread for every payload, so it must
+        return immediately and never block: the HUD's sink only emits a Qt
+        signal, which hands the payload to the GUI thread.
+        """
+        self._sinks.append(fn)
+
+    def discard_sink(self, fn: "Callable[[dict], None]") -> None:
+        if fn in self._sinks:
+            self._sinks.remove(fn)
 
     async def add(self, ws: WebSocket) -> None:
         async with self._lock:
@@ -78,6 +93,12 @@ class Hub:
                 await ws.send_json(payload)
             except Exception:  # client vanished mid-send
                 await self.discard(ws)
+        for sink in list(self._sinks):
+            try:
+                sink(payload)
+            except Exception:  # a broken HUD must not break the stream
+                log.exception("hub sink raised; dropping it")
+                self.discard_sink(sink)
 
 
 def create_app(

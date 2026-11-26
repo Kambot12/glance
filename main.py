@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import logging
 import secrets
+import threading
 import sys
 from pathlib import Path
 
@@ -57,12 +58,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="write captured frames to ./debug_frames (off by default; frames are "
              "otherwise memory-only)",
     )
-    p.add_argument("--hud", action="store_true", help="Qt HUD overlay (step 4, not yet built)")
+    p.add_argument(
+        "--hud", action="store_true",
+        help="floating always-on-top control panel (needs the 'hud' extra). "
+             "Implies the ScreenCaptureKit backend so the panel is excluded "
+             "from its own captures",
+    )
     p.add_argument("-v", "--verbose", action="store_true")
     return p.parse_args(argv)
 
 
-async def run_app(cfg, args) -> int:
+async def run_app(cfg, args, hud=None, bridge=None, submitter=None) -> int:
     hub = Hub()
     inbox: asyncio.Queue[Event] = asyncio.Queue()
     token = secrets.token_urlsafe(32)
@@ -78,7 +84,16 @@ async def run_app(cfg, args) -> int:
 
     try:
         source = build_source(
-            args.source, display=cfg.capture.display, max_edge=cfg.capture.max_edge
+            args.source,
+            display=cfg.capture.display,
+            max_edge=cfg.capture.max_edge,
+            # Read live: the HUD's window id only exists once the panel is on
+            # screen, and changes if it is ever recreated.
+            exclude_window_ids=(
+                (lambda: [hud.window_id] if hud and hud.window_id else [])
+                if hud is not None
+                else None
+            ),
         )
         processor = build_processor(
             args.processor, cfg.provider, jpeg_quality=cfg.capture.jpeg_quality
@@ -86,6 +101,11 @@ async def run_app(cfg, args) -> int:
     except (ValueError, FileNotFoundError, RuntimeError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
+
+    if bridge is not None:
+        # Emitting a Qt signal is the whole sink: it returns immediately and
+        # Qt moves the payload to the GUI thread.
+        hub.add_sink(bridge.payload.emit)
 
     state = SessionState(cfg.history.max_exchanges)
     guard = PrivacyGuard(cfg.privacy)
@@ -125,6 +145,8 @@ async def run_app(cfg, args) -> int:
             log.warning("running without hotkeys; use the buttons in the web view")
 
     orch.bind_loop(asyncio.get_running_loop())
+    if submitter is not None:
+        submitter.bind(orch.submit_from_thread)
     tasks = [
         asyncio.create_task(server.serve(), name="uvicorn"),
         asyncio.create_task(orch.run(), name="orchestrator"),
@@ -150,19 +172,78 @@ async def run_app(cfg, args) -> int:
     return 0
 
 
+def run_hud(cfg, args) -> int:
+    """Qt on the main thread, asyncio on a worker.
+
+    AppKit insists on owning thread 0, so QApplication.exec() cannot be moved.
+    asyncio therefore runs the whole app on a worker thread and the two sides
+    talk only through Qt signals (asyncio -> GUI) and
+    Orchestrator.submit_from_thread (GUI -> asyncio), both of which are
+    thread-safe by design.
+    """
+    try:
+        from PyQt6.QtWidgets import QApplication  # noqa: PLC0415
+    except ImportError:
+        print(
+            "error: --hud needs PyQt6.\n  uv sync --extra hud",
+            file=sys.stderr,
+        )
+        return 2
+
+    from glance.hud import Bridge, Hud, LateSubmitter  # noqa: PLC0415
+
+    app = QApplication(sys.argv[:1])
+    # Hiding the panel with its × must not terminate the app; the hotkeys and
+    # the web view keep working without it.
+    app.setQuitOnLastWindowClosed(False)
+
+    submitter = LateSubmitter()
+    hud = Hud([(m.name, m.hotkey) for m in cfg.modes], submitter.submit)
+    bridge = Bridge()
+    bridge.payload.connect(hud.on_payload)
+    bridge.done.connect(app.quit)
+    hud.realise()
+
+    box: dict = {"rc": 0}
+
+    def runner() -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        box["loop"] = loop
+        task = loop.create_task(
+            run_app(cfg, args, hud=hud, bridge=bridge, submitter=submitter)
+        )
+        box["task"] = task
+        try:
+            box["rc"] = loop.run_until_complete(task)
+        except asyncio.CancelledError:
+            box["rc"] = 0
+        except Exception as e:  # noqa: BLE001 - last line before the thread dies
+            log.error("%s: %s", type(e).__name__, e)
+            box["rc"] = 1
+        finally:
+            with contextlib.suppress(Exception):
+                loop.close()
+            bridge.done.emit()
+
+    thread = threading.Thread(target=runner, name="glance-asyncio", daemon=True)
+    thread.start()
+
+    def shutdown() -> None:
+        loop, task = box.get("loop"), box.get("task")
+        if loop is not None and task is not None and not task.done():
+            loop.call_soon_threadsafe(task.cancel)
+
+    app.aboutToQuit.connect(shutdown)
+    app.exec()
+    thread.join(timeout=5.0)
+    return box["rc"]
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     setup_logging(args.verbose)
     load_dotenv()
-
-    if args.hud:
-        print(
-            "error: --hud is not implemented yet. It lands with the "
-            "ScreenCaptureKit backend (step 4), because excluding the HUD from "
-            "captures needs SCContentFilter.",
-            file=sys.stderr,
-        )
-        return 2
 
     try:
         cfg = load_config(args.config)
@@ -183,6 +264,29 @@ def main(argv: list[str] | None = None) -> int:
     if not args.no_hotkeys:
         for w in warnings_():
             log.warning(w)
+
+    if args.hud:
+        # mss cannot leave a window out of a capture, so an mss-backed HUD
+        # would photograph itself. Prefer ScreenCaptureKit and say so.
+        if args.source == "screen":
+            try:
+                from glance.capture.sck_source import _import_sck  # noqa: PLC0415
+
+                _import_sck()
+                args.source = "sck"
+                log.info("--hud: using the ScreenCaptureKit backend so the "
+                         "panel can be excluded from its own captures")
+            except RuntimeError as e:
+                log.warning(
+                    "--hud on the mss backend: the panel WILL appear in every "
+                    "capture, because mss cannot exclude a window. %s",
+                    str(e).splitlines()[0],
+                )
+        try:
+            return run_hud(cfg, args)
+        except KeyboardInterrupt:
+            print("\nbye")
+            return 0
 
     try:
         return asyncio.run(run_app(cfg, args))
