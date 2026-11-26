@@ -86,7 +86,25 @@ def request_screen_recording() -> None:
         _quartz().CGRequestScreenCaptureAccess()
 
 
-PERMISSION_HELP = """\
+def running_in_bundle() -> bool:
+    """True when launched as glance.app rather than from a terminal.
+
+    Two launch paths, two signals. LaunchServices (`open glance.app`) exports
+    __CFBundleIdentifier; launchd execs the bundle's script directly and does
+    NOT, so the launcher exports GLANCE_BUNDLE_ID itself. Checking only the
+    first silently gave terminal instructions to a bundled app - measured.
+
+    This changes the advice we give, because the Screen Recording grant
+    follows whichever identity actually asked for it.
+    """
+    import os  # noqa: PLC0415
+
+    return bool(
+        os.environ.get("GLANCE_BUNDLE_ID") or os.environ.get("__CFBundleIdentifier")
+    )
+
+
+_HELP_TERMINAL = """\
 Screen Recording permission is not granted.
 
 Grant it to the app that LAUNCHES python (your terminal or VS Code), not to
@@ -101,6 +119,28 @@ Hotkeys additionally need:
 Until then, run the headless path:
   python main.py --source file:assets/sample.png --processor mock
 """
+
+_HELP_BUNDLE = """\
+Screen Recording permission is not granted to glance.app.
+
+A bundle has its own identity, so a grant you gave your terminal or editor
+does NOT carry over - glance.app has to be allowed in its own right:
+
+  System Settings -> Privacy & Security -> Screen & System Audio Recording
+  -> enable "glance" (drag in glance.app if it is not listed)
+
+Hotkeys additionally need:
+  System Settings -> Privacy & Security -> Accessibility
+  System Settings -> Privacy & Security -> Input Monitoring
+
+Then quit glance from the menu bar and start it again; macOS only re-reads
+the grant on launch.
+"""
+
+
+def permission_help() -> str:
+    """The right instructions for how this process was actually launched."""
+    return _HELP_BUNDLE if running_in_bundle() else _HELP_TERMINAL
 
 
 def list_windows() -> list[WindowInfo]:
@@ -149,7 +189,7 @@ def preflight(require_capture: bool) -> list[str]:
                 "log into an X11 session, or use --source file:<png>."
             )
     if require_capture and system == "Darwin" and not screen_recording_granted():
-        problems.append(PERMISSION_HELP)
+        problems.append(permission_help())
     return problems
 
 

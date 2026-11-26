@@ -37,6 +37,18 @@ LAUNCHER = """\
 #!/bin/sh
 # Bundle launcher. Keeps the bundle's identity as the responsible process so
 # Screen Recording is granted to glance.app rather than to a terminal.
+#
+# The cd matters: launchd starts an agent with / as the working directory, so
+# a relative "config.yaml" resolves to /config.yaml and glance exits with
+# "no config at config.yaml". Only the packaged path hits this - running from
+# a terminal always happens to be in the project directory.
+cd "{root}" || exit 1
+# launchd execs this script directly rather than going through
+# LaunchServices, so __CFBundleIdentifier is NOT set in that path. Export the
+# identity ourselves so glance knows it is bundled and can give permission
+# instructions that name glance.app instead of the user's terminal.
+GLANCE_BUNDLE_ID="{bundle_id}"
+export GLANCE_BUNDLE_ID
 exec "{python}" "{main}" {args}
 """
 
@@ -76,7 +88,8 @@ def build(dest: Path, args_line: str, sign: bool = True) -> Path:
 
     launcher = macos / "glance"
     launcher.write_text(
-        LAUNCHER.format(python=python, main=main_py, args=args_line)
+        LAUNCHER.format(python=python, main=main_py, args=args_line, root=ROOT,
+                        bundle_id=BUNDLE_ID)
     )
     launcher.chmod(launcher.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 
