@@ -387,16 +387,39 @@ class Hud(QWidget):
             become_accessory_app()
         self.show()
         self.place_top_centre()
-        QApplication.processEvents()  # the NSWindow only exists once shown
-        self.window_id = apply_native_window_behaviour(self)
-        if self.window_id is None:
-            log.warning(
-                "no window id: the HUD cannot be excluded from its own captures "
-                "and will appear in every frame sent to the model"
-            )
-        else:
-            log.info("hud window id %d (excluded from captures)", self.window_id)
-        return self.window_id
+        QApplication.processEvents()  # the native window only exists once shown
+
+        if IS_MAC:
+            # macOS: the capturer excludes us, so publish an id for it to use.
+            self.window_id = apply_native_window_behaviour(self)
+            if self.window_id is None:
+                log.warning(
+                    "no window id: the HUD cannot be excluded from its own "
+                    "captures and will appear in every frame sent to the model"
+                )
+            else:
+                log.info("hud window id %d (excluded from captures)", self.window_id)
+            return self.window_id
+
+        # Windows: the window excludes itself, so there is no id to hand the
+        # capture source - and the exclusion is system-wide, not glance-only.
+        from glance.platform_win import (  # noqa: PLC0415
+            IS_WINDOWS,
+            exclude_from_capture,
+            set_topmost,
+        )
+
+        if IS_WINDOWS:
+            hwnd = int(self.winId())
+            set_topmost(hwnd)
+            if exclude_from_capture(hwnd):
+                log.info(
+                    "panel excluded from screen capture system-wide "
+                    "(Windows has no per-capture exclusion)"
+                )
+            else:
+                log.warning("panel will appear in captures")
+        return None
 
 
 def _tray_icon() -> QIcon:

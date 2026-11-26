@@ -1,7 +1,11 @@
 # glance
 
-Hotkey → screen capture → vision model → streaming local web view.
+Hotkey → screen capture → vision model → streaming local web view, with an
+always-on-top panel that stays out of its own captures.
 Built and verified on **macOS 27.2 (arm64), Python 3.13**.
+
+**Installing?** See [INSTALL.md](INSTALL.md) — app bundle, login agent,
+permissions, and the Windows plan.
 
 ## Quick start
 
@@ -97,6 +101,13 @@ blocked the entire headless path.
   message (mss and pynput need X11).
 - **Windows** — `dxcam` and `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)`
   are stubs behind a platform guard; untested here by design.
+- **Floating over fullscreen is an *application* property, not a window one.**
+  The panel was invisible over another app's fullscreen Space, which looked
+  like a window-level problem and was not: at `NSStatusWindowLevel` (25), 101
+  and 1000 it behaved identically — visible windowed, invisible fullscreen. A
+  window's Space membership follows the app's activation policy, so the answer
+  is `NSApplicationActivationPolicyAccessory`, set before the window is
+  created. With it, all three levels work, so the level stays at the polite 25.
 - **HUD exclusion** — hiding the HUD during capture is the fallback. The real
   macOS answer is `SCContentFilter(display:excludingWindows:)` from
   ScreenCaptureKit, which excludes the window without hiding it and avoids a
@@ -129,13 +140,22 @@ blocked the entire headless path.
       design, so a `keyboard.Controller` press can never fire a real hotkey.
 - [x] **Step 3** — OCR, `rapidocr` + `onnxruntime` behind the `ocr` extra,
       in `augment` or `fallback` mode
-- [~] **Step 4** — `ScreenCaptureKitSource` **done**: one-shot capture through
-      `SCScreenshotManager`, Retina-native then downscaled, and window exclusion
-      verified — excluding a window blanks exactly its rectangle, at ~68 ms per
-      shot with no measurable cost over a plain capture. `--source sck`.
-      The Qt HUD itself is still to come; it will pass its own CGWindowID to
-      `exclude_window_ids` so it never appears in its own captures.
-- [ ] **Step 5** — `--lan` hardening end to end, QR verified on a phone
+- [x] **Step 4** — `ScreenCaptureKitSource` + Qt HUD, both verified.
+      Capture: one-shot `SCScreenshotManager`, Retina-native then downscaled,
+      ~68 ms, and excluding a window blanks exactly its rectangle
+      (`--source sck`). HUD: `--hud` floats a panel above everything, on every
+      Space and over fullscreen apps, and publishes its CGWindowID so it is
+      excluded from glance's own frames. Measured with the panel on screen —
+      inside its rect, plain-vs-excluded differs by 58.8 while plain-vs-plain
+      is 0.0; outside, both are 1.0. The panel is gone and nothing else moves.
+- [x] **Step 4b** — packaging: `scripts/build_app.py` builds `glance.app`
+      (own TCC identity, ad-hoc signed, no Developer account needed because a
+      locally built app is never quarantined), `scripts/launch_agent.py`
+      installs a login agent, and the permission text adapts to how the
+      process was launched. See [INSTALL.md](INSTALL.md).
+- [~] **Step 5** — Windows: `platform_win.py` written against the documented
+      Win32 API but **not yet run on Windows**. `--lan` hardening and the QR
+      on a phone still to do.
 
 ### Two bugs the end-to-end runs caught
 
@@ -155,7 +175,7 @@ Both were invisible to the unit tests, which is the argument for
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest -q                      # 110 unit/integration tests
+.venv/bin/python -m pytest -q                      # 136 unit/integration tests
 .venv/bin/python scripts/verify_pipeline.py        # real server, real WebSocket
 ```
 
