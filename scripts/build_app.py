@@ -15,32 +15,36 @@ built locally is never quarantined and needs no Developer ID, no notarization
 and no $99/yr account. Shipping a prebuilt .app or .dmg from GitHub Releases
 is the case that needs signing + notarization; see INSTALL.md.
 
-The interpreter has to live INSIDE the bundle
----------------------------------------------
-The first version of this script wrote a shell launcher that did
-`exec /path/to/.venv/bin/python main.py`. That looks fine and does not work:
-`exec` REPLACES the process image, so the running binary was
-/Library/Frameworks/Python.framework/.../python3.13 - outside glance.app
-entirely. TCC attributes permission to the code that is actually running, so
-granting Screen Recording to glance.app had no effect at all; the app kept
-reporting the permission as missing no matter how often it was granted.
+The main executable has to BE the running image
+----------------------------------------------
+macOS attributes Screen Recording to the code that is actually running, so it
+is not enough for glance.app to launch python - the running image must live
+inside the bundle. Two simpler designs were tried and both failed:
 
-The fix is to copy the interpreter into Contents/MacOS/ so the running image
-is inside the bundle, and to rebuild the venv layout around it:
+  * A shell launcher doing `exec .venv/bin/python main.py`. exec replaces the
+    process image, so the running binary was the system Python framework,
+    outside the bundle. Granting the permission to glance.app did nothing at
+    all, through both LaunchServices and launchd.
 
-    Contents/MacOS/glance      sh launcher, execs the interpreter beside it
-    Contents/MacOS/python      a COPY of the real interpreter
-    Contents/MacOS/pyvenv.cfg  isolates it from system site-packages
+  * Copying bin/python3.13 into the bundle. On a framework build that binary
+    is a stub which immediately re-execs Python.app/Contents/MacOS/Python,
+    so the real image was outside the bundle before Qt was even imported -
+    while sys.executable still reported the bundle path, which is exactly
+    what made the first fix look like it had worked. Copying Python.app's own
+    binary instead is SIGKILLed (exit 137): its signature does not survive
+    being moved.
 
-site-packages is supplied through PYTHONPATH rather than a symlink. Linking
-Contents/lib at the project's .venv/lib works at runtime but makes the
-signature invalid - `codesign --verify` rejects it with "invalid destination
-for symbolic link in bundle", because the link leaves the bundle. An invalid
-signature means no stable code identity, which is the whole reason the
-interpreter was moved inside the bundle in the first place.
+So the bundle ships a small compiled launcher (scripts/launcher.c) that
+embeds CPython through Py_BytesMain. Nothing re-execs, the image stays inside
+glance.app, and the binary is signed as part of the bundle - which is what
+gives it a stable TCC identity.
 
-The bundle stays thin: it copies one binary and symlinks the rest, so it does
-not vendor the dependencies and the build is instant.
+site-packages arrives through PYTHONPATH rather than a Contents/lib symlink
+into the project's .venv. The symlink works at runtime but makes the
+signature invalid ("invalid destination for symbolic link in bundle"), and an
+invalid signature defeats the whole point.
+
+The bundle stays thin: one small binary, no vendored dependencies.
 """
 from __future__ import annotations
 
@@ -48,7 +52,6 @@ import argparse
 import os
 import plistlib
 import shutil
-import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -56,34 +59,57 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 BUNDLE_ID = "com.glance.app"
 
-LAUNCHER = """\
-#!/bin/sh
-# Bundle launcher.
-#
-# It execs the interpreter COPIED NEXT TO THIS SCRIPT, not the project's
-# .venv/bin/python. exec replaces the process image, so whichever binary is
-# named here is what macOS sees running - and TCC will only attribute Screen
-# Recording to glance.app if that binary lives inside glance.app.
-#
-# The cd matters: launchd starts an agent with / as the working directory, so
-# a relative "config.yaml" resolves to /config.yaml and glance exits with
-# "no config at config.yaml". Only the packaged path hits this - running from
-# a terminal always happens to be in the project directory.
-cd "{root}" || exit 1
-# launchd execs this script directly rather than going through
-# LaunchServices, so __CFBundleIdentifier is NOT set in that path. Export the
-# identity ourselves so glance knows it is bundled and can give permission
-# instructions that name glance.app instead of the user's terminal.
-GLANCE_BUNDLE_ID="{bundle_id}"
-export GLANCE_BUNDLE_ID
-# site-packages comes in by PYTHONPATH. A Contents/lib symlink to the
-# project's .venv would also work at runtime but invalidates the signature,
-# because the link points outside the bundle.
-PYTHONPATH="{site_packages}"
-export PYTHONPATH
-HERE=$(dirname "$0")
-exec "$HERE/python" "{main}" {args}
-"""
+LAUNCHER_SRC = Path(__file__).resolve().parent / "launcher.c"
+
+
+def python_config() -> Path:
+    """The python-config for the interpreter the venv was built from."""
+    base = Path(sys.executable).resolve().parent
+    for name in (f"python{sys.version_info.major}.{sys.version_info.minor}-config",
+                 "python3-config"):
+        candidate = base / name
+        if candidate.exists():
+            return candidate
+    sys.exit(
+        "error: python-config not found next to {}.\n"
+        "A framework Python (python.org or `uv python install`) is needed to "
+        "build the launcher.".format(base)
+    )
+
+
+def compile_launcher(dest: Path, args_line: str, site_packages: Path) -> None:
+    """Compile scripts/launcher.c into the bundle's main executable.
+
+    Values are baked in at compile time rather than read at runtime: there is
+    no shell to set them, and a launcher that reads a config file would just
+    reintroduce a path that can go stale.
+    """
+    if not shutil.which("clang"):
+        sys.exit(
+            "error: clang not found. Install the Command Line Tools:\n"
+            "  xcode-select --install"
+        )
+    cfg = python_config()
+    includes = subprocess.run([str(cfg), "--includes"], capture_output=True,
+                              text=True).stdout.split()
+    ldflags = subprocess.run([str(cfg), "--ldflags", "--embed"],
+                             capture_output=True, text=True).stdout.split()
+    if not ldflags:  # older python-config without --embed
+        ldflags = subprocess.run([str(cfg), "--ldflags"], capture_output=True,
+                                 text=True).stdout.split()
+    cmd = [
+        "clang", "-Os", "-o", str(dest), str(LAUNCHER_SRC),
+        f'-DGLANCE_ROOT="{ROOT}"',
+        f'-DGLANCE_SCRIPT="{ROOT / "main.py"}"',
+        f'-DGLANCE_ARGS="{args_line}"',
+        f'-DGLANCE_PYTHONPATH="{site_packages}"',
+        f'-DGLANCE_BUNDLE_ID="{BUNDLE_ID}"',
+        *includes, *ldflags,
+    ]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit(f"error: could not build the launcher:\n{r.stderr}")
+    dest.chmod(0o755)
 
 
 def build(dest: Path, args_line: str, sign: bool = True) -> Path:
@@ -119,15 +145,12 @@ def build(dest: Path, args_line: str, sign: bool = True) -> Path:
     with open(app / "Contents" / "Info.plist", "wb") as fh:
         plistlib.dump(info, fh)
 
-    # The interpreter itself, copied in so the running image is inside the
-    # bundle. Resolve the symlink: .venv/bin/python points at the framework.
-    real_python = python.resolve()
-    shutil.copy2(real_python, macos / "python")
-    (macos / "python").chmod(0o755)
+    site_packages = sorted((ROOT / ".venv" / "lib").glob("python*/site-packages"))
+    if not site_packages:
+        sys.exit("error: no site-packages in .venv; run `uv sync --extra hud --extra sck`")
 
-    # Rebuild the venv around the copy. Python reads pyvenv.cfg beside the
-    # executable and sets sys.prefix to the PARENT directory, so lib belongs
-    # at Contents/lib.
+    # pyvenv.cfg beside the executable keeps the embedded interpreter off the
+    # system site-packages.
     venv_cfg = ROOT / ".venv" / "pyvenv.cfg"
     home = "/Library/Frameworks/Python.framework/Versions/3.13/bin"
     version = "3.13.14"
@@ -142,16 +165,7 @@ def build(dest: Path, args_line: str, sign: bool = True) -> Path:
         f"version_info = {version}\n"
     )
 
-    site_packages = sorted((ROOT / ".venv" / "lib").glob("python*/site-packages"))
-    if not site_packages:
-        sys.exit("error: no site-packages in .venv; run `uv sync --extra hud --extra sck`")
-
-    launcher = macos / "glance"
-    launcher.write_text(
-        LAUNCHER.format(main=main_py, args=args_line, root=ROOT,
-                        bundle_id=BUNDLE_ID, site_packages=site_packages[-1])
-    )
-    launcher.chmod(launcher.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    compile_launcher(macos / "glance", args_line, site_packages[-1])
 
     if sign:
         # Ad-hoc signing is free and needs no account. It gives the bundle a
