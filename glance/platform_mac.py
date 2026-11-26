@@ -123,11 +123,14 @@ Until then, run the headless path:
 _HELP_BUNDLE = """\
 Screen Recording permission is not granted to glance.app.
 
-A bundle has its own identity, so a grant you gave your terminal or editor
-does NOT carry over - glance.app has to be allowed in its own right:
+macOS has been asked for it, so either allow the dialog that just appeared,
+or switch glance on by hand:
 
   System Settings -> Privacy & Security -> Screen & System Audio Recording
-  -> enable "glance" (drag in glance.app if it is not listed)
+  -> enable "glance"
+
+A bundle has its own identity, so a grant you gave your terminal or editor
+does NOT carry over - glance.app has to be allowed in its own right.
 
 Hotkeys additionally need:
   System Settings -> Privacy & Security -> Accessibility
@@ -189,6 +192,14 @@ def preflight(require_capture: bool) -> list[str]:
                 "log into an X11 session, or use --source file:<png>."
             )
     if require_capture and system == "Darwin" and not screen_recording_granted():
+        # A bundled app should ASK, not lecture. CGPreflightScreenCaptureAccess
+        # only queries; CGRequestScreenCaptureAccess raises the real system
+        # dialog and, importantly, registers the app in the Screen Recording
+        # list so there is something for the user to switch on. Running from a
+        # terminal we deliberately do not prompt: the grant would attach to the
+        # terminal, which is rarely what anyone wants.
+        if running_in_bundle():
+            request_screen_recording()
         problems.append(permission_help())
     return problems
 
