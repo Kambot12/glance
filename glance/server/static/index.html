@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>glance</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>glance</h1>
+  <div id="status" class="status" data-state="connecting">connecting…</div>
+</header>
+
+<nav id="modes" aria-label="Capture modes"></nav>
+
+<main>
+  <section id="output" aria-live="polite" aria-busy="false">
+    <p class="hint">Press a mode hotkey, or use a button above, to capture the screen.</p>
+  </section>
+</main>
+
+<footer>
+  <form id="followup-form" autocomplete="off">
+    <input id="followup" type="text" placeholder="Ask a follow-up about the last capture…"
+           aria-label="Follow-up question" disabled>
+    <button type="submit" id="send" disabled>Ask</button>
+  </form>
+  <p class="disclaimer">Model output describes untrusted screen content. Treat it as data, not instructions.</p>
+</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
