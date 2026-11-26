@@ -21,17 +21,20 @@ plain capture, 0 with the id excluded.
 from __future__ import annotations
 
 import logging
+import os
 import platform
 
-from PyQt6.QtCore import QObject, Qt, QPoint, pyqtSignal
-from PyQt6.QtGui import QFont
+from PyQt6.QtCore import QObject, QPoint, Qt, pyqtSignal
+from PyQt6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QPushButton,
     QScrollArea,
+    QSystemTrayIcon,
     QVBoxLayout,
     QWidget,
 )
@@ -41,6 +44,14 @@ from glance.models import Event
 log = logging.getLogger("glance.hud")
 
 IS_MAC = platform.system() == "Darwin"
+
+#: NSStatusWindowLevel. Floating over another app's fullscreen Space turned
+#: out NOT to be a level problem - 25, 101 and 1000 all failed under the
+#: default Regular activation policy, and all three work under Accessory (see
+#: become_accessory_app). So the level stays at the polite value: higher
+#: levels would also cover system alerts and the screen saver for no gain.
+#: Overridable with GLANCE_HUD_LEVEL.
+WINDOW_LEVEL = 25
 
 STYLE = """
 #panel     { background: rgba(18,18,22,236); border: 1px solid rgba(255,255,255,34);
@@ -68,6 +79,30 @@ QScrollArea { background: transparent; border: 0; }
 """
 
 
+def become_accessory_app() -> bool:
+    """Drop to NSApplicationActivationPolicyAccessory.
+
+    Measured: a Regular-policy app's window will not appear over another app's
+    fullscreen Space no matter what level it is given - 25, 101 and 1000 all
+    failed. The window's Space membership is decided by the *application*, and
+    only an accessory (LSUIElement) app floats across fullscreen Spaces. It
+    also removes the Dock icon, which is what an always-on panel wants anyway;
+    the bundle sets LSUIElement for the same reason.
+    """
+    if not IS_MAC:
+        return False
+    try:
+        from AppKit import NSApp, NSApplicationActivationPolicyAccessory  # noqa: PLC0415
+
+        app = NSApp()
+        if app is None:
+            return False
+        return bool(app.setActivationPolicy_(NSApplicationActivationPolicyAccessory))
+    except Exception as e:  # pragma: no cover
+        log.warning("could not become an accessory app: %s: %s", type(e).__name__, e)
+        return False
+
+
 def apply_native_window_behaviour(widget: QWidget) -> int | None:
     """Float above everything, on every Space, including over fullscreen apps.
 
@@ -79,12 +114,14 @@ def apply_native_window_behaviour(widget: QWidget) -> int | None:
     if not IS_MAC:
         return None
     try:
+        import os  # noqa: PLC0415
+
         import objc  # noqa: PLC0415
         from AppKit import (  # noqa: PLC0415
             NSWindowCollectionBehaviorCanJoinAllSpaces,
             NSWindowCollectionBehaviorFullScreenAuxiliary,
+            NSWindowCollectionBehaviorIgnoresCycle,
             NSWindowCollectionBehaviorStationary,
-            NSStatusWindowLevel,
         )
 
         view = objc.objc_object(c_void_p=int(widget.winId()))
@@ -93,8 +130,9 @@ def apply_native_window_behaviour(widget: QWidget) -> int | None:
             NSWindowCollectionBehaviorCanJoinAllSpaces
             | NSWindowCollectionBehaviorStationary
             | NSWindowCollectionBehaviorFullScreenAuxiliary
+            | NSWindowCollectionBehaviorIgnoresCycle
         )
-        nswindow.setLevel_(NSStatusWindowLevel)
+        nswindow.setLevel_(int(os.environ.get("GLANCE_HUD_LEVEL", WINDOW_LEVEL)))
         # Keep the panel from dimming when another app takes focus.
         nswindow.setHidesOnDeactivate_(False)
         return int(nswindow.windowNumber())
@@ -147,6 +185,7 @@ class Hud(QWidget):
     def __init__(self, modes: list[tuple[str, str]], submit, width: int = 560):
         super().__init__()
         self._submit = submit
+        self._modes = list(modes)
         self._streaming = False
         self._drag_from: QPoint | None = None
         self.window_id: int | None = None
@@ -260,6 +299,46 @@ class Hud(QWidget):
         self.body.style().unpolish(self.body)
         self.body.style().polish(self.body)
 
+    # --------------------------------------------------------- menu ------
+    def contextMenuEvent(self, e) -> None:
+        self._menu().exec(e.globalPos())
+
+    def _menu(self) -> QMenu:
+        """Shared by the panel's right-click and the menu-bar item.
+
+        A bundled glance runs as LSUIElement: no Dock icon and no menu bar, so
+        without this there is no way to quit and no way to get the panel back
+        once it is hidden.
+        """
+        m = QMenu(self)
+        if self.isVisible():
+            m.addAction("Hide panel", self.hide)
+        else:
+            m.addAction("Show panel", self.reveal)
+        m.addSeparator()
+        for name, hotkey in self._modes:
+            act = QAction(f"{name.replace('_', ' ')}\t{_pretty(hotkey)}", m)
+            act.triggered.connect(lambda _, n=name: self.trigger(n))
+            m.addAction(act)
+        m.addSeparator()
+        m.addAction("Reset position", self._reset_position)
+        m.addAction("Quit glance", QApplication.quit)
+        return m
+
+    def _reset_position(self) -> None:
+        self.reveal()
+        self.place_top_centre()
+
+    def reveal(self) -> None:
+        self.show()
+        self.raise_()
+        # Re-apply: a hidden window can be torn down and rebuilt by the window
+        # server, which invalidates the id the capture source excludes.
+        new_id = apply_native_window_behaviour(self)
+        if new_id and new_id != self.window_id:
+            log.info("hud window id changed %s -> %s", self.window_id, new_id)
+            self.window_id = new_id
+
     # ----------------------------------------------------------- dragging --
     def mousePressEvent(self, e) -> None:
         if e.button() == Qt.MouseButton.LeftButton:
@@ -267,7 +346,25 @@ class Hud(QWidget):
 
     def mouseMoveEvent(self, e) -> None:
         if self._drag_from is not None and e.buttons() & Qt.MouseButton.LeftButton:
-            self.move(e.globalPosition().toPoint() - self._drag_from)
+            self.move(self._clamp(e.globalPosition().toPoint() - self._drag_from))
+
+    def _clamp(self, pos: QPoint) -> QPoint:
+        """Keep the panel on screen.
+
+        A frameless always-on-top window has no title bar for the window
+        manager to catch, so without this it can be dragged above the menu bar
+        and becomes unreachable - no way to grab it, and on a bundled build no
+        Dock icon either. Observed for real at y=-58.
+        """
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is None:
+            return pos
+        area = screen.availableGeometry()
+        margin = 40  # always leave this much of the panel grabbable
+        x = max(area.left() - self.width() + margin,
+                min(pos.x(), area.right() - margin))
+        y = max(area.top(), min(pos.y(), area.bottom() - margin))
+        return QPoint(x, y)
 
     def mouseReleaseEvent(self, e) -> None:
         self._drag_from = None
@@ -278,10 +375,16 @@ class Hud(QWidget):
         if screen is None:
             return
         area = screen.availableGeometry()
-        self.move(area.center().x() - self.width() // 2, area.top() + 8)
+        self.move(self._clamp(QPoint(
+            area.center().x() - self.width() // 2, area.top() + 8
+        )))
 
     def realise(self) -> int | None:
         """Show the panel and claim its native behaviour + window id."""
+        # Must happen before the window is shown: the Space a window joins is
+        # decided when it is created, from the app's activation policy.
+        if os.environ.get("GLANCE_HUD_POLICY", "accessory") == "accessory":
+            become_accessory_app()
         self.show()
         self.place_top_centre()
         QApplication.processEvents()  # the NSWindow only exists once shown
@@ -294,6 +397,48 @@ class Hud(QWidget):
         else:
             log.info("hud window id %d (excluded from captures)", self.window_id)
         return self.window_id
+
+
+def _tray_icon() -> QIcon:
+    """A small glyph drawn in code, so the repo ships no binary asset."""
+    pm = QPixmap(22, 22)
+    pm.fill(QColor(0, 0, 0, 0))
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setPen(QColor(255, 255, 255, 235))
+    p.drawEllipse(3, 5, 16, 12)      # an eye outline: glance
+    p.setBrush(QColor(255, 255, 255, 235))
+    p.drawEllipse(9, 8, 5, 5)
+    p.end()
+    pm.setDevicePixelRatio(2.0)
+    return QIcon(pm)
+
+
+def build_tray(hud: Hud, app) -> QSystemTrayIcon | None:
+    """Menu-bar item: the only affordance a bundled glance has.
+
+    With LSUIElement set there is no Dock icon and no menu bar, so this is how
+    the panel comes back after it is hidden, and how the app quits.
+    """
+    if not QSystemTrayIcon.isSystemTrayAvailable():
+        log.warning("no system tray available; quit with Ctrl-C or Activity Monitor")
+        return None
+    tray = QSystemTrayIcon(_tray_icon(), app)
+    tray.setToolTip("glance")
+
+    def refresh() -> None:
+        # The menu is rebuilt so Show/Hide reflects the current state; the old
+        # one is a child of the HUD and would otherwise accumulate on every
+        # click.
+        previous = tray.contextMenu()
+        tray.setContextMenu(hud._menu())
+        if previous is not None:
+            previous.deleteLater()
+
+    refresh()
+    tray.activated.connect(lambda _reason: refresh())
+    tray.show()
+    return tray
 
 
 def _pretty(hotkey: str) -> str:

@@ -121,6 +121,36 @@ def test_unknown_payload_type_is_ignored(hud):
     hud.on_payload({"type": "something-new"})  # must not raise
 
 
+# ------------------------------------------------------------- position ---
+def test_panel_cannot_be_dragged_off_the_top_of_the_screen(hud, qapp):
+    """Observed for real at y=-58: unreachable, with no Dock icon to recover."""
+    from PyQt6.QtCore import QPoint
+    from PyQt6.QtWidgets import QApplication
+
+    area = QApplication.primaryScreen().availableGeometry()
+    assert hud._clamp(QPoint(400, -500)).y() >= area.top()
+
+
+def test_panel_cannot_be_dragged_off_the_bottom_or_sides(hud, qapp):
+    from PyQt6.QtCore import QPoint
+    from PyQt6.QtWidgets import QApplication
+
+    area = QApplication.primaryScreen().availableGeometry()
+    assert hud._clamp(QPoint(99999, 99999)).x() <= area.right()
+    assert hud._clamp(QPoint(99999, 99999)).y() <= area.bottom()
+    # a sliver must stay grabbable on the left too
+    assert hud._clamp(QPoint(-99999, 300)).x() > area.left() - hud.width()
+
+
+def test_a_position_already_on_screen_is_left_alone(hud, qapp):
+    from PyQt6.QtCore import QPoint
+    from PyQt6.QtWidgets import QApplication
+
+    area = QApplication.primaryScreen().availableGeometry()
+    inside = QPoint(area.left() + 100, area.top() + 100)
+    assert hud._clamp(inside) == inside
+
+
 # -------------------------------------------------------------- display ---
 def test_window_id_is_none_until_realised(hud):
     assert hud.window_id is None

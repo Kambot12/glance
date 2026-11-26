@@ -190,7 +190,7 @@ def run_hud(cfg, args) -> int:
         )
         return 2
 
-    from glance.hud import Bridge, Hud, LateSubmitter  # noqa: PLC0415
+    from glance.hud import Bridge, Hud, LateSubmitter, build_tray  # noqa: PLC0415
 
     app = QApplication(sys.argv[:1])
     # Hiding the panel with its × must not terminate the app; the hotkeys and
@@ -203,6 +203,9 @@ def run_hud(cfg, args) -> int:
     bridge.payload.connect(hud.on_payload)
     bridge.done.connect(app.quit)
     hud.realise()
+    # Held on `app` so it is not garbage collected; a dropped tray icon simply
+    # vanishes from the menu bar.
+    app._glance_tray = build_tray(hud, app)
 
     box: dict = {"rc": 0}
 
