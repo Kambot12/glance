@@ -9,8 +9,11 @@ Measured behaviour on macOS 27.2 that shapes this module:
 """
 from __future__ import annotations
 
+import logging
 import platform
 from dataclasses import dataclass
+
+log = logging.getLogger("glance.platform")
 
 IS_MAC = platform.system() == "Darwin"
 
@@ -78,6 +81,56 @@ def input_monitoring_granted() -> bool | None:
         return iokit.IOHIDCheckAccess(1) == 0
     except (OSError, AttributeError):
         return None
+
+
+def request_accessibility() -> bool:
+    """Ask for Accessibility, showing the system dialog.
+
+    AXIsProcessTrusted() only queries, which is why glance could warn that
+    hotkeys would not register while never appearing in the Accessibility list
+    for the user to switch on. The WithOptions form and the prompt key raise
+    the real dialog, and - the part that matters - register the app so there
+    is an entry to enable at all.
+    """
+    if not IS_MAC:
+        return False
+    try:
+        from ApplicationServices import (  # noqa: PLC0415
+            AXIsProcessTrustedWithOptions,
+            kAXTrustedCheckOptionPrompt,
+        )
+
+        return bool(AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: True}))
+    except Exception as e:  # pragma: no cover
+        log.warning("could not request Accessibility: %s: %s", type(e).__name__, e)
+        return False
+
+
+def request_input_monitoring() -> bool:
+    """Ask for Input Monitoring, the grant pynput's event tap actually needs.
+
+    Separate from Accessibility: with only Accessibility the listener starts
+    cleanly and never receives a keystroke. pyobjc has no IOKit binding, so
+    this goes through ctypes like the matching check does.
+    """
+    if not IS_MAC:
+        return False
+    try:
+        import ctypes  # noqa: PLC0415
+        import ctypes.util  # noqa: PLC0415
+
+        path = (
+            ctypes.util.find_library("IOKit")
+            or "/System/Library/Frameworks/IOKit.framework/IOKit"
+        )
+        iokit = ctypes.cdll.LoadLibrary(path)
+        iokit.IOHIDRequestAccess.restype = ctypes.c_bool
+        iokit.IOHIDRequestAccess.argtypes = [ctypes.c_uint32]
+        # kIOHIDRequestTypeListenEvent = 1
+        return bool(iokit.IOHIDRequestAccess(1))
+    except (OSError, AttributeError) as e:
+        log.warning("could not request Input Monitoring: %s: %s", type(e).__name__, e)
+        return False
 
 
 def request_screen_recording() -> None:
@@ -205,12 +258,47 @@ def preflight(require_capture: bool) -> list[str]:
 
 
 def warnings_() -> list[str]:
-    """Non-fatal notes. Hotkeys are optional, so a missing grant only warns."""
+    """Non-fatal notes. Hotkeys are optional, so a missing grant only warns.
+
+    A bundled glance also ASKS for the two hotkey grants rather than only
+    naming them. Querying leaves the app absent from the Privacy lists, so the
+    advice "enable glance in Accessibility" refers to a row that does not
+    exist yet and the user has to locate and drag in the .app by hand.
+    Requesting puts it there.
+
+    Run from a terminal we only warn: the grant would attach to the terminal,
+    handing every program it runs the same access.
+    """
     out: list[str] = []
-    if IS_MAC and accessibility_granted() is False:
+    if not IS_MAC:
+        return out
+
+    bundled = running_in_bundle()
+    ax = accessibility_granted()
+    if ax is False:
+        if bundled:
+            request_accessibility()
         out.append(
             "Accessibility is not granted, so hotkeys will not register. "
-            "System Settings -> Privacy & Security -> Accessibility, then "
-            "restart this app. (--no-hotkeys skips them.)"
+            + (
+                "Allow glance in the dialog that just appeared, or enable it "
+                "under System Settings -> Privacy & Security -> Accessibility, "
+                "then quit glance from the menu bar and start it again."
+                if bundled
+                else "System Settings -> Privacy & Security -> Accessibility, "
+                "then restart this app."
+            )
+            + " (--no-hotkeys skips them.)"
+        )
+
+    im = input_monitoring_granted()
+    if im is False:
+        if bundled:
+            request_input_monitoring()
+        out.append(
+            "Input Monitoring is not granted. It is a separate grant from "
+            "Accessibility, and without it the hotkey listener starts without "
+            "error and then never receives a keystroke. System Settings -> "
+            "Privacy & Security -> Input Monitoring."
         )
     return out
