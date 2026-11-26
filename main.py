@@ -23,7 +23,7 @@ from dotenv import load_dotenv
 from glance.capture import build_source
 from glance.config import ConfigError, load_config
 from glance.console import banner, local_ip, session_url, setup_logging
-from glance.hotkeys import HotkeyListener
+from glance.hotkeys import HotkeyListener, prime_keycode_context
 from glance.models import Event
 from glance.ocr import build_engine
 from glance.orchestrator import Orchestrator
@@ -196,6 +196,12 @@ def run_hud(cfg, args) -> int:
     # Hiding the panel with its × must not terminate the app; the hotkeys and
     # the web view keep working without it.
     app.setQuitOnLastWindowClosed(False)
+
+    # Must happen on the main thread, before the listener starts on the
+    # asyncio thread: pynput's listener would otherwise call Carbon Text
+    # Services off-main, which HIToolbox turns into a SIGTRAP once Qt's run
+    # loop is up. See hotkeys.prime_keycode_context.
+    prime_keycode_context()
 
     submitter = LateSubmitter()
     hud = Hud([(m.name, m.hotkey) for m in cfg.modes], submitter.submit)

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import socket
+import sys
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -73,3 +74,9 @@ def banner(
         print("  Scan to open on another device on this network:")
         print_qr(url)
         print(line)
+
+    # stdout is block-buffered when it is a file rather than a tty, so a
+    # packaged glance - whose output goes to ~/Library/Logs/glance.log - would
+    # sit on the session URL indefinitely. The URL carries the token, so
+    # without it the web view cannot be opened at all.
+    sys.stdout.flush()

@@ -125,3 +125,54 @@ def test_callback_submits_the_right_event(cfg, monkeypatch):
         Event(kind="mode", mode="summarize", manual=True),
         Event(kind="pause"),
     ]
+
+
+# ------------------------------------------------- keycode context priming --
+def test_priming_caches_the_layout_and_patches_both_modules():
+    """pynput opens keycode_context() on its listener thread, which calls
+    Carbon Text Services. Once Qt's run loop is up, HIToolbox asserts those
+    are main-queue only and SIGTRAPs the process - so glance crashed on launch
+    whenever --hud and hotkeys were both on. Priming moves that call to the
+    main thread and hands the listener a cached value."""
+    import platform
+
+    if platform.system() != "Darwin":
+        pytest.skip("macOS only")
+
+    from pynput._util import darwin as pdarwin
+    from pynput.keyboard import _darwin as pkeyboard
+
+    assert hk.prime_keycode_context() is True
+
+    # both modules must be patched: keyboard/_darwin imports the name directly
+    assert pdarwin.keycode_context is pkeyboard.keycode_context
+
+    with pdarwin.keycode_context() as ctx:
+        keyboard_type, layout = ctx
+    assert isinstance(keyboard_type, int)
+    assert layout is None or isinstance(layout, bytes)
+
+
+def test_priming_is_idempotent():
+    import platform
+
+    if platform.system() != "Darwin":
+        pytest.skip("macOS only")
+    assert hk.prime_keycode_context() is True
+    assert hk.prime_keycode_context() is True
+
+
+def test_priming_never_raises_even_if_pynput_changes(monkeypatch):
+    """A pynput internal moving must degrade to a warning, not a failed start."""
+    import platform
+
+    if platform.system() != "Darwin":
+        pytest.skip("macOS only")
+    from pynput._util import darwin as pdarwin
+
+    monkeypatch.setattr(pdarwin, "_glance_primed", False, raising=False)
+    monkeypatch.setattr(
+        pdarwin, "keycode_context",
+        lambda: (_ for _ in ()).throw(AttributeError("moved")),
+    )
+    assert hk.prime_keycode_context() is False

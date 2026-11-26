@@ -62,6 +62,9 @@ int main(int argc, char **argv) {
         return 1;
     }
     setenv("PYTHONPATH", GLANCE_PYTHONPATH, 1);
+    /* Output goes to a log file, where stdout would otherwise be
+     * block-buffered and the session URL would never appear. */
+    setenv("PYTHONUNBUFFERED", "1", 1);
     /* launchd does not export __CFBundleIdentifier the way LaunchServices
      * does, so glance would otherwise print terminal-shaped permission help. */
     setenv("GLANCE_BUNDLE_ID", GLANCE_BUNDLE_ID, 1);
