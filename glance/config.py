@@ -116,6 +116,37 @@ class OcrConfig(Strict):
     max_chars: int = Field(4000, gt=0)
 
 
+class HudConfig(Strict):
+    """The floating panel's appearance and its own hotkey."""
+
+    # Resting opacity. The panel sits on top of whatever the user is reading,
+    # so it stays faint until it is wanted.
+    opacity: float = Field(default=0.28, ge=0.05, le=1.0)
+    # Opacity while the pointer is over it, or while a response is streaming -
+    # a panel you cannot read is not useful.
+    opacity_active: float = Field(default=0.97, ge=0.05, le=1.0)
+    # Show/hide the panel without touching the mouse.
+    toggle_hotkey: str = "<cmd>+<shift>+\\"
+
+    @field_validator("toggle_hotkey")
+    @classmethod
+    def _hotkey_shape(cls, v: str) -> str:
+        if not HOTKEY_RE.match(v):
+            raise ValueError(
+                f"{v!r} is not a pynput hotkey; expected e.g. '<cmd>+<shift>+1'"
+            )
+        return v
+
+    @model_validator(mode="after")
+    def _ordered(self) -> "HudConfig":
+        if self.opacity > self.opacity_active:
+            raise ValueError(
+                f"hud.opacity ({self.opacity}) is above hud.opacity_active "
+                f"({self.opacity_active}); the panel would fade when pointed at"
+            )
+        return self
+
+
 class HistoryConfig(Strict):
     max_exchanges: int = Field(6, ge=0, le=50)
 
@@ -127,6 +158,7 @@ class AppConfig(Strict):
     server: ServerConfig = Field(default_factory=ServerConfig)
     privacy: PrivacyConfig = Field(default_factory=PrivacyConfig)
     ocr: OcrConfig = Field(default_factory=OcrConfig)
+    hud: HudConfig = Field(default_factory=HudConfig)
     history: HistoryConfig = Field(default_factory=HistoryConfig)
     pause_hotkey: str = "<cmd>+<shift>+0"
     modes: list[ModeConfig]
@@ -139,7 +171,10 @@ class AppConfig(Strict):
         if len(set(names)) != len(names):
             dupes = {n for n in names if names.count(n) > 1}
             raise ValueError(f"duplicate mode names: {sorted(dupes)}")
-        keys = [m.hotkey for m in self.modes] + [self.pause_hotkey]
+        keys = [m.hotkey for m in self.modes] + [
+            self.pause_hotkey,
+            self.hud.toggle_hotkey,
+        ]
         if len(set(keys)) != len(keys):
             dupes = {k for k in keys if keys.count(k) > 1}
             raise ValueError(f"hotkey bound more than once: {sorted(dupes)}")

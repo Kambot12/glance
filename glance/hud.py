@@ -113,6 +113,20 @@ def apply_native_window_behaviour(widget: QWidget) -> int | None:
     """
     if not IS_MAC:
         return None
+
+    # objc.objc_object() on a pointer that is not an NSView segfaults rather
+    # than raising, so the cheap checks have to come first. Qt's "offscreen"
+    # and "minimal" platforms have no NSWindow at all, and winId() is 0 until
+    # the window is realised.
+    if QApplication.platformName() != "cocoa":
+        log.debug("platform %r has no native window to configure",
+                  QApplication.platformName())
+        return None
+    handle = int(widget.winId() or 0)
+    if handle == 0:
+        log.warning("window not realised yet; native behaviour not applied")
+        return None
+
     try:
         import os  # noqa: PLC0415
 
@@ -124,7 +138,7 @@ def apply_native_window_behaviour(widget: QWidget) -> int | None:
             NSWindowCollectionBehaviorStationary,
         )
 
-        view = objc.objc_object(c_void_p=int(widget.winId()))
+        view = objc.objc_object(c_void_p=handle)
         nswindow = view.window()
         nswindow.setCollectionBehavior_(
             NSWindowCollectionBehaviorCanJoinAllSpaces
@@ -182,10 +196,22 @@ class Hud(QWidget):
     :param submit: thread-safe event submitter, i.e. Orchestrator.submit_from_thread.
     """
 
-    def __init__(self, modes: list[tuple[str, str]], submit, width: int = 560):
+    def __init__(
+        self,
+        modes: list[tuple[str, str]],
+        submit,
+        width: int = 560,
+        opacity: float = 0.28,
+        opacity_active: float = 0.97,
+        toggle_hotkey: str = "",
+    ):
         super().__init__()
         self._submit = submit
         self._modes = list(modes)
+        self._toggle_hotkey = toggle_hotkey
+        self._opacity_rest = opacity
+        self._opacity_active = opacity_active
+        self._hovered = False
         self._streaming = False
         self._drag_from: QPoint | None = None
         self.window_id: int | None = None
@@ -254,6 +280,41 @@ class Hud(QWidget):
 
         self.setFixedWidth(width)
         self.adjustSize()
+        self.setWindowOpacity(self._opacity_rest)
+
+    # ------------------------------------------------------------ opacity --
+    def _refresh_opacity(self) -> None:
+        """Faint at rest, solid when wanted.
+
+        The panel sits on top of whatever the user is actually reading, so it
+        stays out of the way until it is pointed at - or until an answer is
+        streaming in, because a response you cannot read is no use.
+        """
+        wanted = (
+            self._opacity_active
+            if (self._hovered or self._streaming)
+            else self._opacity_rest
+        )
+        if abs(self.windowOpacity() - wanted) > 0.001:
+            self.setWindowOpacity(wanted)
+
+    def enterEvent(self, e) -> None:
+        self._hovered = True
+        self._refresh_opacity()
+        super().enterEvent(e)
+
+    def leaveEvent(self, e) -> None:
+        self._hovered = False
+        self._refresh_opacity()
+        super().leaveEvent(e)
+
+    def toggle_visible(self) -> bool:
+        """Show or hide the panel. Returns the new visibility."""
+        if self.isVisible():
+            self.hide()
+            return False
+        self.reveal()
+        return True
 
     # ------------------------------------------------------------ actions --
     def trigger(self, mode: str) -> None:
@@ -270,8 +331,12 @@ class Hud(QWidget):
     def on_payload(self, msg: dict) -> None:
         """Called on the GUI thread via Bridge.payload."""
         kind = msg.get("type")
+        if kind == "panel":
+            self.toggle_visible()
+            return
         if kind == "start":
             self._streaming = True
+            self._refresh_opacity()
             self.body.setObjectName("body")
             self._restyle()
             self.body.setText("")
@@ -280,14 +345,17 @@ class Hud(QWidget):
             if not self._streaming:
                 self.body.setText("")
                 self._streaming = True
+                self._refresh_opacity()
             self.body.setText(self.body.text() + str(msg.get("text", "")))
             bar = self.scroll.verticalScrollBar()
             bar.setValue(bar.maximum())
         elif kind == "end":
             self._streaming = False
             self.status.setText("ready")
+            self._refresh_opacity()
         elif kind in ("error", "blocked"):
             self._streaming = False
+            self._refresh_opacity()
             self.status.setText(kind)
             self.body.setObjectName("empty")
             self._restyle()
@@ -311,10 +379,11 @@ class Hud(QWidget):
         once it is hidden.
         """
         m = QMenu(self)
+        shortcut = f"\t{_pretty(self._toggle_hotkey)}" if self._toggle_hotkey else ""
         if self.isVisible():
-            m.addAction("Hide panel", self.hide)
+            m.addAction(f"Hide panel{shortcut}", self.hide)
         else:
-            m.addAction("Show panel", self.reveal)
+            m.addAction(f"Show panel{shortcut}", self.reveal)
         m.addSeparator()
         for name, hotkey in self._modes:
             act = QAction(f"{name.replace('_', ' ')}\t{_pretty(hotkey)}", m)
@@ -332,6 +401,7 @@ class Hud(QWidget):
     def reveal(self) -> None:
         self.show()
         self.raise_()
+        self._refresh_opacity()
         # Re-apply: a hidden window can be torn down and rebuilt by the window
         # server, which invalidates the id the capture source excludes.
         new_id = apply_native_window_behaviour(self)

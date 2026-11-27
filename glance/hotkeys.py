@@ -111,6 +111,7 @@ class HotkeyListener:
             for m in self.cfg.modes
         }
         mapping[self.cfg.pause_hotkey] = self._make(Event(kind="pause"))
+        mapping[self.cfg.hud.toggle_hotkey] = self._make(Event(kind="panel"))
         try:
             self._listener = keyboard.GlobalHotKeys(mapping)
             self._listener.start()
@@ -138,6 +139,7 @@ class HotkeyListener:
         for m in self.cfg.modes:
             log.info("hotkey %s -> %s", m.hotkey, m.name)
         log.info("hotkey %s -> pause/resume", self.cfg.pause_hotkey)
+        log.info("hotkey %s -> show/hide panel", self.cfg.hud.toggle_hotkey)
         return True
 
     def _live_within(self, grace_s: float) -> bool:

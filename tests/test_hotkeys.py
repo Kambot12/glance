@@ -89,7 +89,7 @@ def test_start_survives_a_constructor_raise(cfg, monkeypatch):
     assert listener._listener is None
 
 
-def test_registered_mapping_covers_every_mode_and_pause(cfg, monkeypatch):
+def test_registered_mapping_covers_modes_pause_and_panel_toggle(cfg, monkeypatch):
     seen = {}
 
     class Capture(_LiveListener):
@@ -100,7 +100,11 @@ def test_registered_mapping_covers_every_mode_and_pause(cfg, monkeypatch):
     _patch(monkeypatch, Capture)
     listener = hk.HotkeyListener(cfg, lambda ev: None)
     assert listener.start() is True
-    assert set(seen) == {"<cmd>+<shift>+1", cfg.pause_hotkey}
+    assert set(seen) == {
+        "<cmd>+<shift>+1",
+        cfg.pause_hotkey,
+        cfg.hud.toggle_hotkey,
+    }
     listener.stop()
 
 

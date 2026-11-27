@@ -130,6 +130,13 @@ class Orchestrator:
             )
             return
 
+        if event.kind == "panel":
+            # The HUD lives on the Qt thread, so the hotkey cannot touch it
+            # directly; it goes out as a payload like everything else and the
+            # Bridge delivers it on the GUI thread.
+            await self.hub.broadcast({"type": "panel", "action": "toggle"})
+            return
+
         if event.kind == "watch":
             if self._active and not self._active.done():
                 log.debug("watch tick skipped: a response is already streaming")

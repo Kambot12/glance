@@ -193,6 +193,23 @@ def run_hud(cfg, args) -> int:
         return 2
 
     from glance.hud import Bridge, Hud, LateSubmitter, build_tray  # noqa: PLC0415
+    from glance import singleton  # noqa: PLC0415
+
+    # Hand over to a glance that is already running rather than competing with
+    # it for the port. This is what makes clicking glance.app do something:
+    # the existing instance shows its panel and this process exits.
+    existing = singleton.live_pid()
+    if existing is not None:
+        if singleton.poke(existing):
+            print(f"glance is already running (pid {existing}); showing its panel")
+            return 0
+        print(
+            f"glance appears to be running (pid {existing}) but did not respond.\n"
+            "Quit it from the menu bar, or remove "
+            f"{singleton.pidfile()} if it is stale.",
+            file=sys.stderr,
+        )
+        return 1
 
     app = QApplication(sys.argv[:1])
     # Hiding the panel with its × must not terminate the app; the hotkeys and
@@ -206,7 +223,13 @@ def run_hud(cfg, args) -> int:
     prime_keycode_context()
 
     submitter = LateSubmitter()
-    hud = Hud([(m.name, m.hotkey) for m in cfg.modes], submitter.submit)
+    hud = Hud(
+        [(m.name, m.hotkey) for m in cfg.modes],
+        submitter.submit,
+        opacity=cfg.hud.opacity,
+        opacity_active=cfg.hud.opacity_active,
+        toggle_hotkey=cfg.hud.toggle_hotkey,
+    )
     bridge = Bridge()
     bridge.payload.connect(hud.on_payload)
     bridge.done.connect(app.quit)
@@ -270,13 +293,37 @@ def run_hud(cfg, args) -> int:
         log.info("terminating on signal")
         app.quit()
 
+    def _on_reopen(_signum, _frame) -> None:
+        """A second launch asking us to surface."""
+        log.info("another launch asked for the panel")
+        hud.reveal()
+
+    def _on_activated(state) -> None:
+        """Clicking glance.app when it is already running.
+
+        LaunchServices does not start a second process in that case - it just
+        activates this one - so the handover path never runs and, with the
+        panel hidden and no Dock icon, nothing visible happened at all.
+        Treating activation as "show me" is what the click means.
+        """
+        from PyQt6.QtCore import Qt as _Qt  # noqa: PLC0415
+
+        if state == _Qt.ApplicationState.ApplicationActive and not hud.isVisible():
+            log.info("activated; showing the panel")
+            hud.reveal()
+
+    app.applicationStateChanged.connect(_on_activated)
+
     signal.signal(signal.SIGTERM, _on_term)
     signal.signal(signal.SIGINT, _on_term)
+    signal.signal(signal.SIGUSR1, _on_reopen)
+    singleton.claim()
     wake = QTimer()
     wake.start(250)
     wake.timeout.connect(lambda: None)
 
     app.exec()
+    singleton.release()
     thread.join(timeout=5.0)
     return box["rc"]
 

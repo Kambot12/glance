@@ -82,6 +82,26 @@ keystroke — `scripts/doctor.py` checks both for exactly this reason.
 macOS only re-reads a grant at launch, so **quit glance from the menu bar and
 start it again** after changing anything.
 
+### Hotkeys
+
+| Hotkey | Does |
+|---|---|
+| **⌘⇧1** | summarize what is on screen |
+| **⌘⇧2** | **solve** — answer the question or problem on screen |
+| **⌘⇧3** | explain the code on screen |
+| **⌘⇧4** | read a dashboard or chart |
+| **⌘⇧0** | pause / resume |
+| **⌘⇧\** | show / hide the panel |
+
+All of them are `config.yaml`; the modes are just a name, a hotkey and a
+system prompt, so adding your own is three lines.
+
+### The panel
+
+It rests at **28% opacity** so it does not sit in front of what you are
+reading, and goes solid when you point at it or while an answer is streaming
+in. Both values are `hud.opacity` and `hud.opacity_active`.
+
 ### Quitting and the menu bar
 
 A bundled glance runs as an agent: no Dock icon. The menu-bar item is the only

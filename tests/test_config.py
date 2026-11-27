@@ -21,7 +21,9 @@ def test_minimal_config_gets_sane_defaults():
 
 def test_shipped_example_config_is_valid():
     cfg = load_config("config.example.yaml")
-    assert [m.name for m in cfg.modes] == ["summarize", "explain_code", "analyze_dashboard"]
+    assert [m.name for m in cfg.modes] == [
+        "summarize", "solve", "explain_code", "analyze_dashboard",
+    ]
     assert cfg.provider.api_key_env is None  # no secret, not even a name, by default
 
 
@@ -117,3 +119,37 @@ def test_validation_error_names_the_file(tmp_path):
     p.write_text(yaml.safe_dump({"modes": []}))
     with pytest.raises(ConfigError, match="failed validation"):
         load_config(p)
+
+
+# ------------------------------------------------------------- hud config --
+def test_hud_opacity_must_not_exceed_its_active_value():
+    """Otherwise the panel would fade exactly when it is pointed at."""
+    import pytest
+
+    from glance.config import HudConfig
+
+    with pytest.raises(Exception, match="would fade when pointed at"):
+        HudConfig(opacity=0.9, opacity_active=0.2)
+
+
+def test_hud_toggle_hotkey_is_validated():
+    import pytest
+
+    from glance.config import HudConfig
+
+    with pytest.raises(Exception, match="not a pynput hotkey"):
+        HudConfig(toggle_hotkey="cmd shift backslash")
+
+
+def test_panel_toggle_cannot_collide_with_a_mode_hotkey():
+    """All four hotkey families share one namespace."""
+    import pytest
+
+    from glance.config import AppConfig, HudConfig, ModeConfig
+
+    with pytest.raises(Exception, match="bound more than once"):
+        AppConfig(
+            modes=[ModeConfig(name="summarize", hotkey="<cmd>+<shift>+1",
+                              system_prompt="s")],
+            hud=HudConfig(toggle_hotkey="<cmd>+<shift>+1"),
+        )

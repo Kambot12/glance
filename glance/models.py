@@ -50,7 +50,7 @@ class Block:
 
 Verdict = Allow | Block
 
-EventKind = Literal["mode", "pause", "followup", "watch"]
+EventKind = Literal["mode", "pause", "followup", "watch", "panel"]
 
 
 @dataclass

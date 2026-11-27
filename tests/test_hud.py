@@ -28,8 +28,13 @@ def qapp():
 @pytest.fixture
 def hud(qapp):
     sent = []
-    w = Hud([("summarize", "<cmd>+<shift>+1"), ("explain_code", "<cmd>+<shift>+2")],
-            sent.append)
+    w = Hud(
+        [("summarize", "<cmd>+<shift>+1"), ("solve", "<cmd>+<shift>+2")],
+        sent.append,
+        opacity=0.28,
+        opacity_active=0.97,
+        toggle_hotkey="<cmd>+<shift>+\\",
+    )
     w._sent = sent
     yield w
     w.deleteLater()
@@ -166,3 +171,55 @@ def test_window_id_is_none_until_realised(hud):
 )
 def test_hotkeys_render_as_mac_symbols(raw, pretty):
     assert _pretty(raw) == pretty
+
+
+# -------------------------------------------------------------- opacity ---
+def test_panel_rests_faint(hud):
+    """It floats over what the user is actually reading."""
+    assert hud.windowOpacity() == pytest.approx(0.28, abs=0.01)
+
+
+def test_pointing_at_it_makes_it_solid(hud):
+    hud._hovered = True
+    hud._refresh_opacity()
+    assert hud.windowOpacity() == pytest.approx(0.97, abs=0.01)
+    hud._hovered = False
+    hud._refresh_opacity()
+    assert hud.windowOpacity() == pytest.approx(0.28, abs=0.01)
+
+
+def test_a_streaming_answer_makes_it_readable_without_the_mouse(hud):
+    """A response you cannot read is no use, so streaming raises it too."""
+    hud.on_payload({"type": "start", "label": "solve"})
+    assert hud.windowOpacity() == pytest.approx(0.97, abs=0.01)
+    hud.on_payload({"type": "end"})
+    assert hud.windowOpacity() == pytest.approx(0.28, abs=0.01)
+
+
+def test_it_stays_solid_after_streaming_while_still_hovered(hud):
+    hud._hovered = True
+    hud.on_payload({"type": "start", "label": "solve"})
+    hud.on_payload({"type": "end"})
+    assert hud.windowOpacity() == pytest.approx(0.97, abs=0.01)
+
+
+# --------------------------------------------------------------- toggle ---
+def test_panel_payload_toggles_visibility(hud):
+    hud.show()
+    assert hud.isVisible()
+    hud.on_payload({"type": "panel", "action": "toggle"})
+    assert not hud.isVisible()
+    hud.on_payload({"type": "panel", "action": "toggle"})
+    assert hud.isVisible()
+
+
+def test_toggle_visible_returns_the_new_state(hud):
+    hud.show()
+    assert hud.toggle_visible() is False
+    assert hud.toggle_visible() is True
+
+
+def test_a_toggle_payload_does_not_disturb_the_response(hud):
+    hud.on_payload({"type": "chunk", "text": "an answer"})
+    hud.on_payload({"type": "panel", "action": "toggle"})
+    assert hud.body.text() == "an answer"
