@@ -223,6 +223,7 @@ class Hud(QWidget):
         # read it.
         self._unseen = False
         self._hold_timer = None
+        self._top_timer = None
         self._opacity_rest = opacity
         self._opacity_active = opacity_active
         self._hovered = False
@@ -402,6 +403,7 @@ class Hud(QWidget):
             log.info("keep-on-top disabled")
             return
         self._top_timer = QTimer(self)
+        self._top_timer.setTimerType(Qt.TimerType.VeryCoarseTimer)
         self._top_timer.timeout.connect(self._reassert_on_top)
         self._top_timer.start(int(interval_s * 1000))
 
@@ -510,10 +512,17 @@ class Hud(QWidget):
         """Hiding on purpose, so the watchdog must not undo it."""
         self._want_visible = False
         self.hide()
+        # Nothing can be covering a hidden panel, so the watchdog has no work.
+        # Leaving it ticking is pure battery cost for a machine that may sit
+        # with the panel down all day.
+        if self._top_timer is not None:
+            self._top_timer.stop()
 
     def reveal(self) -> None:
         self._want_visible = True
         self.show()
+        if self._top_timer is not None and not self._top_timer.isActive():
+            self._top_timer.start()
         if self._unseen:
             # The answer arrived while this was hidden; show it properly and
             # only then let it fade.

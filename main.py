@@ -322,7 +322,12 @@ def run_hud(cfg, args) -> int:
     signal.signal(signal.SIGUSR1, _on_reopen)
     singleton.claim()
     wake = QTimer()
-    wake.start(250)
+    # 1 s, not 250 ms. This timer exists only so the interpreter gets a chance
+    # to run signal handlers; it does no work. Waking four times a second to
+    # do nothing keeps the CPU out of its deeper idle states for no benefit,
+    # and glance is meant to sit there all day on battery. A SIGTERM being
+    # noticed up to a second later costs nothing.
+    wake.start(1000)
     wake.timeout.connect(lambda: None)
 
     app.exec()
