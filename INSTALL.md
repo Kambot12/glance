@@ -63,6 +63,27 @@ needs no Apple Developer account, no `$99/yr`, no notarization, and shows no
 
 Logs go to `~/Library/Logs/glance.log`.
 
+### 3b. Start the model endpoint at login too
+
+glance is only useful with a model behind it, and Ollama does **not** install
+a LaunchAgent of its own — it is started by Ollama.app, by hand. Without this
+step glance comes back after a reboot and every capture fails at the model
+step.
+
+```bash
+.venv/bin/python scripts/launch_agent.py install --service ollama
+.venv/bin/python scripts/launch_agent.py status  --service ollama
+.venv/bin/python scripts/launch_agent.py uninstall --service ollama
+```
+
+That serves the model headlessly, so Ollama.app never has to be open. Logs go
+to `~/Library/Logs/ollama-serve.log`.
+
+The agent stands down if something is already listening on 11434, so it can
+coexist with Ollama.app in either order. Without that guard the two race for
+the port and the loser exits with `address already in use` — and with
+`--keep-alive` it would respawn straight back into the same failure.
+
 ### 4. Grant permissions
 
 A bundle has its **own** identity. A grant you gave Terminal, iTerm or VS Code
