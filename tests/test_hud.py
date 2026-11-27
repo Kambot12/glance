@@ -96,6 +96,7 @@ def test_start_clears_the_previous_response(hud):
 
 
 def test_end_returns_the_status_to_ready(hud):
+    hud.show()
     hud.on_payload({"type": "start", "label": "summarize"})
     hud.on_payload({"type": "chunk", "text": "x"})
     hud.on_payload({"type": "end"})
@@ -223,3 +224,85 @@ def test_a_toggle_payload_does_not_disturb_the_response(hud):
     hud.on_payload({"type": "chunk", "text": "an answer"})
     hud.on_payload({"type": "panel", "action": "toggle"})
     assert hud.body.text() == "an answer"
+
+
+# ------------------------------------ answers that land behind a hidden panel --
+def test_an_answer_that_finishes_while_hidden_is_kept_and_flagged(hud):
+    """Hiding must not cost the user the answer.
+
+    The stream keeps running regardless - verified end to end - but the panel
+    used to drop straight back to resting opacity when it ended, so a finished
+    answer sat there at 28% and read as "nothing happened".
+    """
+    hud.show()
+    hud.on_payload({"type": "start", "label": "solve"})
+    hud.on_payload({"type": "chunk", "text": "The answer "})
+    hud._hide_by_request()
+
+    hud.on_payload({"type": "chunk", "text": "is 42."})
+    hud.on_payload({"type": "end"})
+
+    assert hud.body.text() == "The answer is 42."      # nothing lost
+    assert hud._unseen is True
+    assert hud.status.text() == "answer ready"
+
+
+def test_revealing_shows_an_unseen_answer_at_full_strength(hud):
+    hud.show()
+    hud.on_payload({"type": "start", "label": "solve"})
+    hud.on_payload({"type": "chunk", "text": "42"})
+    hud._hide_by_request()
+    hud.on_payload({"type": "end"})
+
+    hud.reveal()
+    assert hud._unseen is False
+    assert hud.status.text() == "ready"
+    assert hud.windowOpacity() == pytest.approx(0.97, abs=0.01)
+    assert hud.body.text() == "42"
+
+
+def test_a_finished_answer_stays_readable_instead_of_fading_at_once(hud):
+    hud.show()
+    hud.on_payload({"type": "start", "label": "solve"})
+    hud.on_payload({"type": "chunk", "text": "42"})
+    hud.on_payload({"type": "end"})
+    # still solid: the hold timer is running
+    assert hud.windowOpacity() == pytest.approx(0.97, abs=0.01)
+
+
+def test_hold_can_be_turned_off(qapp):
+    w = Hud([("solve", "<cmd>+<shift>+2")], lambda e: None,
+            opacity=0.28, opacity_active=0.97, hold_after_answer_s=0)
+    w.show()
+    w.on_payload({"type": "start", "label": "solve"})
+    w.on_payload({"type": "chunk", "text": "42"})
+    w.on_payload({"type": "end"})
+    assert w.windowOpacity() == pytest.approx(0.28, abs=0.01)
+    w.deleteLater()
+
+
+def test_an_empty_stream_does_not_claim_an_answer_is_waiting(hud):
+    hud.show()
+    hud.on_payload({"type": "start", "label": "solve"})
+    hud._hide_by_request()
+    hud.on_payload({"type": "end"})
+    assert hud._unseen is False
+    assert hud.status.text() == "ready"
+
+
+def test_hovering_counts_as_having_seen_it(hud):
+    """Pointing at the panel is the user reading it, so the flag clears."""
+    from PyQt6.QtCore import QPointF
+    from PyQt6.QtGui import QEnterEvent
+
+    hud.show()
+    hud.on_payload({"type": "start", "label": "solve"})
+    hud.on_payload({"type": "chunk", "text": "42"})
+    hud._hide_by_request()
+    hud.on_payload({"type": "end"})
+    assert hud._unseen is True
+
+    p = QPointF(10.0, 10.0)
+    hud.enterEvent(QEnterEvent(p, p, p))
+    assert hud._unseen is False
+    assert hud._hovered is True

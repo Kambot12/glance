@@ -124,18 +124,19 @@ class Orchestrator:
             await self.hub.broadcast({"type": "status", "text": text, "state": "open"})
             return
 
+        if event.kind == "panel":
+            # Checked before the pause guard: showing or hiding the panel is a
+            # view control, not an action, and refusing it while paused would
+            # strand the user with no way to see the panel again.
+            log.info("panel toggle (%s)", event.origin)
+            await self.hub.broadcast({"type": "panel", "action": "toggle"})
+            return
+
         if self.state.paused and event.kind != "followup":
             log.info("ignoring %s while paused", event.kind)
             await self.hub.broadcast(
                 {"type": "status", "text": "paused", "state": "open"}
             )
-            return
-
-        if event.kind == "panel":
-            # The HUD lives on the Qt thread, so the hotkey cannot touch it
-            # directly; it goes out as a payload like everything else and the
-            # Bridge delivers it on the GUI thread.
-            await self.hub.broadcast({"type": "panel", "action": "toggle"})
             return
 
         if event.kind == "watch":

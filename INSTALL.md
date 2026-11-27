@@ -118,6 +118,15 @@ immediately, by any of the four signals above.
 
 ### The panel
 
+Hiding the panel never cancels anything. A capture already in flight runs to
+completion, and if it finishes while the panel is down the answer is kept and
+the status reads **answer ready**; the next time you bring the panel up it is
+shown at full opacity rather than fading straight back.
+
+A finished answer also stays readable for `hud.hold_after_answer_s` seconds
+(8 by default) before fading, so a response does not drop to 28% the instant
+it lands.
+
 It rests at **28% opacity** so it does not sit in front of what you are
 reading, and goes solid when you point at it or while an answer is streaming
 in. Both values are `hud.opacity` and `hud.opacity_active`.

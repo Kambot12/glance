@@ -164,6 +164,8 @@ def create_app(
                     )
                 elif kind == "pause":
                     await inbox.put(Event(kind="pause", origin="ui"))
+                elif kind == "panel":
+                    await inbox.put(Event(kind="panel", origin="ui"))
         except WebSocketDisconnect:
             pass
         except Exception as e:

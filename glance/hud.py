@@ -210,12 +210,19 @@ class Hud(QWidget):
         opacity_active: float = 0.97,
         toggle_hotkey: str = "",
         hide_from_recording: bool = True,
+        hold_after_answer_s: float = 8.0,
     ):
         super().__init__()
         self._submit = submit
         self._modes = list(modes)
         self._toggle_hotkey = toggle_hotkey
         self._hide_from_recording = hide_from_recording
+        self._hold_s = hold_after_answer_s
+        # An answer that finished while the panel was hidden has never been
+        # seen. It must not be faded out before the user has had a chance to
+        # read it.
+        self._unseen = False
+        self._hold_timer = None
         self._opacity_rest = opacity
         self._opacity_active = opacity_active
         self._hovered = False
@@ -303,16 +310,28 @@ class Hud(QWidget):
         stays out of the way until it is pointed at - or until an answer is
         streaming in, because a response you cannot read is no use.
         """
+        holding = self._hold_timer is not None and self._hold_timer.isActive()
         wanted = (
             self._opacity_active
-            if (self._hovered or self._streaming)
+            if (self._hovered or self._streaming or holding or self._unseen)
             else self._opacity_rest
         )
         if abs(self.windowOpacity() - wanted) > 0.001:
             self.setWindowOpacity(wanted)
 
+    def _start_hold(self) -> None:
+        """Keep the panel readable for a while after an answer lands."""
+        if self._hold_s <= 0:
+            return
+        if self._hold_timer is None:
+            self._hold_timer = QTimer(self)
+            self._hold_timer.setSingleShot(True)
+            self._hold_timer.timeout.connect(self._refresh_opacity)
+        self._hold_timer.start(int(self._hold_s * 1000))
+
     def enterEvent(self, e) -> None:
         self._hovered = True
+        self._unseen = False
         self._refresh_opacity()
         super().enterEvent(e)
 
@@ -431,7 +450,16 @@ class Hud(QWidget):
             bar.setValue(bar.maximum())
         elif kind == "end":
             self._streaming = False
-            self.status.setText("ready")
+            if self.body.text().strip():
+                if not self.isVisible():
+                    # Finished behind a hidden panel: keep it for the reveal.
+                    self._unseen = True
+                    self.status.setText("answer ready")
+                else:
+                    self.status.setText("ready")
+                    self._start_hold()
+            else:
+                self.status.setText("ready")
             self._refresh_opacity()
         elif kind in ("error", "blocked"):
             self._streaming = False
@@ -486,6 +514,12 @@ class Hud(QWidget):
     def reveal(self) -> None:
         self._want_visible = True
         self.show()
+        if self._unseen:
+            # The answer arrived while this was hidden; show it properly and
+            # only then let it fade.
+            self._unseen = False
+            self.status.setText("ready")
+            self._start_hold()
         self.raise_()
         self._refresh_opacity()
         self._reassert_on_top()

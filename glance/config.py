@@ -132,6 +132,11 @@ class HudConfig(Strict):
     opacity_active: float = Field(default=0.97, ge=0.05, le=1.0)
     # Show/hide the panel without touching the mouse.
     toggle_hotkey: str = "<cmd>+<shift>+."
+    # How long the panel stays readable after an answer finishes, in seconds.
+    # Without this it drops straight back to the resting opacity the moment
+    # the stream ends, so a finished answer is sitting there at 28% and reads
+    # as "nothing happened". 0 restores the old behaviour.
+    hold_after_answer_s: float = Field(default=8.0, ge=0.0, le=300.0)
     # Keep the panel out of screen recordings and screen shares.
     #
     # macOS: NSWindowSharingNone - the same mechanism 1Password uses to keep a

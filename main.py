@@ -230,6 +230,7 @@ def run_hud(cfg, args) -> int:
         opacity_active=cfg.hud.opacity_active,
         toggle_hotkey=cfg.hud.toggle_hotkey,
         hide_from_recording=cfg.hud.hide_from_screen_recording,
+        hold_after_answer_s=cfg.hud.hold_after_answer_s,
     )
     bridge = Bridge()
     bridge.payload.connect(hud.on_payload)
