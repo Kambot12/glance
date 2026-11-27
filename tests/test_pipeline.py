@@ -216,3 +216,39 @@ async def test_ocr_text_is_marked_untrusted_in_the_prompt(tmp_path):
     assert "<ocr>" in text and "untrusted" in text
     assert "GUARD" not in text
     assert "untrusted" in msgs[0]["content"]  # system prompt carries the guard too
+
+
+# ------------------------------------------- history matches what was sent --
+def test_recorded_history_is_the_turn_that_was_actually_sent():
+    """History and the real prompt had drifted.
+
+    The orchestrator recorded "[solve] describe the current screen" while the
+    processor was really sending the mode's user_prompt. A follow-up then saw
+    a transcript in which the assistant answered a question nobody had asked,
+    and small models lose the thread completely - observed as an empty reply.
+    """
+    from glance.config import ModeConfig
+    from glance.vision.base import DEFAULT_USER_PROMPT
+
+    answering = ModeConfig(
+        name="solve", hotkey="<cmd>+<shift>+2", system_prompt="s",
+        user_prompt="Answer the question on this screen.",
+    )
+    plain = ModeConfig(name="summarize", hotkey="<cmd>+<shift>+1", system_prompt="s")
+
+    # what the orchestrator records
+    assert ((answering.user_prompt or "").strip() or DEFAULT_USER_PROMPT) == (
+        "Answer the question on this screen."
+    )
+    assert ((plain.user_prompt or "").strip() or DEFAULT_USER_PROMPT) == (
+        DEFAULT_USER_PROMPT
+    )
+
+
+def test_a_mode_without_a_user_prompt_falls_back_to_the_shared_default():
+    from glance.config import ModeConfig
+    from glance.vision.base import DEFAULT_USER_PROMPT
+
+    m = ModeConfig(name="x", hotkey="<cmd>+<shift>+7", system_prompt="s")
+    assert m.user_prompt is None
+    assert DEFAULT_USER_PROMPT == "Here is the current screen capture."

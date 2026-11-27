@@ -21,6 +21,7 @@ from pathlib import Path
 from glance import imaging
 from glance.capture.base import CaptureSource
 from glance.config import AppConfig
+from glance.vision.base import DEFAULT_USER_PROMPT
 from glance.models import Block, Event, Frame
 from glance.ocr import EMPTY, NullOcrEngine, OcrEngine, OcrResult
 from glance.privacy import PrivacyGuard
@@ -253,9 +254,15 @@ class Orchestrator:
             self.processor.endpoint,
             (time.perf_counter() - t0) * 1000,
         )
+        # Record the turn that was actually sent, not a description of it.
+        # These had drifted: history said the user asked to "describe the
+        # current screen" while the model was really asked to answer the
+        # question on it, so a follow-up saw an assistant answering something
+        # nobody had asked - and small models lose the thread completely.
+        asked = (mode.user_prompt or "").strip() or DEFAULT_USER_PROMPT
         await self._stream(
             frame, mode.name, label=f"{mode.name}{' · watch' if watch else ''}",
-            question=f"[{mode.name}] describe the current screen",
+            question=asked,
             # A mode may state its own ask. Without one the processor falls
             # back to a neutral "here is the screen", which nudges the model
             # towards describing rather than answering.
@@ -314,6 +321,21 @@ class Orchestrator:
             await self.hub.broadcast({"type": "error", "text": f"{type(e).__name__}: {e}"})
             return
         answer = "".join(parts)
+        if not answer.strip():
+            # A blank panel with no explanation looks like a hang. Recording
+            # the empty turn would also be actively harmful: it teaches the
+            # model, through its own history, that saying nothing is an
+            # acceptable reply in this conversation.
+            log.warning("model returned an empty response; not recorded")
+            await self.hub.broadcast(
+                {
+                    "type": "error",
+                    "text": "the model returned an empty response - try again, "
+                            "or try a different mode",
+                }
+            )
+            await self.hub.broadcast({"type": "end"})
+            return
         self.state.record(mode_name, question, answer)
         # Count only: the response body never reaches a log line by default.
         log.info("stream complete (%d chunks, %d chars)", len(parts), len(answer))

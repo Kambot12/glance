@@ -24,7 +24,7 @@ import logging
 import os
 import platform
 
-from PyQt6.QtCore import QObject, QPoint, Qt, pyqtSignal
+from PyQt6.QtCore import QObject, QPoint, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
@@ -140,6 +140,7 @@ def apply_native_window_behaviour(widget: QWidget) -> int | None:
 
         view = objc.objc_object(c_void_p=handle)
         nswindow = view.window()
+        widget._nswindow = nswindow
         nswindow.setCollectionBehavior_(
             NSWindowCollectionBehaviorCanJoinAllSpaces
             | NSWindowCollectionBehaviorStationary
@@ -308,6 +309,56 @@ class Hud(QWidget):
         self._refresh_opacity()
         super().leaveEvent(e)
 
+    # -------------------------------------------------------- stay on top --
+    def _reassert_on_top(self) -> None:
+        """Put the panel back above everything.
+
+        The level and collection behaviour are properties set when the window
+        is created, and a window created AFTER it - a browser opening, an app
+        launching, returning from a fullscreen Space - can be ordered above it
+        and stay there. Re-applying them costs nothing and is the only way to
+        keep the guarantee without recreating the window.
+
+        orderFrontRegardless is the important part: it raises the window
+        without activating the application, so the panel never steals focus
+        from what the user is typing into.
+        """
+        if not IS_MAC or not self.isVisible():
+            return
+        nswindow = getattr(self, "_nswindow", None)
+        if nswindow is None:
+            return
+        try:
+            from AppKit import (  # noqa: PLC0415
+                NSWindowCollectionBehaviorCanJoinAllSpaces,
+                NSWindowCollectionBehaviorFullScreenAuxiliary,
+                NSWindowCollectionBehaviorIgnoresCycle,
+                NSWindowCollectionBehaviorStationary,
+            )
+
+            wanted = (
+                NSWindowCollectionBehaviorCanJoinAllSpaces
+                | NSWindowCollectionBehaviorStationary
+                | NSWindowCollectionBehaviorFullScreenAuxiliary
+                | NSWindowCollectionBehaviorIgnoresCycle
+            )
+            if nswindow.collectionBehavior() != wanted:
+                nswindow.setCollectionBehavior_(wanted)
+            level = int(os.environ.get("GLANCE_HUD_LEVEL", WINDOW_LEVEL))
+            if nswindow.level() != level:
+                nswindow.setLevel_(level)
+            nswindow.orderFrontRegardless()
+        except Exception as e:  # pragma: no cover - needs a live window server
+            log.debug("could not re-assert top: %s: %s", type(e).__name__, e)
+
+    def start_keep_on_top(self, interval_s: float) -> None:
+        if interval_s <= 0:
+            log.info("keep-on-top disabled")
+            return
+        self._top_timer = QTimer(self)
+        self._top_timer.timeout.connect(self._reassert_on_top)
+        self._top_timer.start(int(interval_s * 1000))
+
     def toggle_visible(self) -> bool:
         """Show or hide the panel. Returns the new visibility."""
         if self.isVisible():
@@ -402,6 +453,7 @@ class Hud(QWidget):
         self.show()
         self.raise_()
         self._refresh_opacity()
+        self._reassert_on_top()
         # Re-apply: a hidden window can be torn down and rebuilt by the window
         # server, which invalidates the id the capture source excludes.
         new_id = apply_native_window_behaviour(self)

@@ -132,6 +132,11 @@ class HudConfig(Strict):
     opacity_active: float = Field(default=0.97, ge=0.05, le=1.0)
     # Show/hide the panel without touching the mouse.
     toggle_hotkey: str = "<cmd>+<shift>+."
+    # How often to re-assert "stay on top", in seconds; 0 disables it.
+    # The window level is set once when the panel is created, so a window made
+    # afterwards - a browser opening, an app launching, a Space switch - can
+    # end up above it and stay there until the panel is recreated.
+    keep_on_top_s: float = Field(default=2.0, ge=0.0, le=60.0)
 
     @field_validator("toggle_hotkey")
     @classmethod

@@ -6,6 +6,13 @@ from glance.config import ModeConfig
 from glance.models import Exchange, Frame
 
 
+#: The user turn sent with a frame when a mode states no user_prompt of its
+#: own. It lives here so the processor and the orchestrator cannot drift: the
+#: orchestrator records it in the conversation history, and history that does
+#: not match what was actually sent produces an incoherent transcript.
+DEFAULT_USER_PROMPT = "Here is the current screen capture."
+
+
 @runtime_checkable
 class VisionProcessor(Protocol):
     name: str

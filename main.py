@@ -234,6 +234,7 @@ def run_hud(cfg, args) -> int:
     bridge.payload.connect(hud.on_payload)
     bridge.done.connect(app.quit)
     hud.realise()
+    hud.start_keep_on_top(cfg.hud.keep_on_top_s)
     # Held on `app` so it is not garbage collected; a dropped tray icon simply
     # vanishes from the menu bar.
     app._glance_tray = build_tray(hud, app)

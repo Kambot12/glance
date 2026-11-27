@@ -9,6 +9,7 @@ from typing import AsyncIterator
 from glance import imaging
 from glance.config import ModeConfig, ProviderConfig
 from glance.models import Exchange, Frame
+from glance.vision.base import DEFAULT_USER_PROMPT
 
 # Prepended to every mode prompt. Screen content is untrusted input and this
 # assistant has no tools, so the only defence that matters is refusing to treat
@@ -49,8 +50,10 @@ class OpenAICompatProcessor:
         for ex in history:
             msgs.append({"role": "user", "content": ex.question})
             msgs.append({"role": "assistant", "content": ex.answer})
-        prompt = user_text.strip() if user_text and user_text.strip() else (
-            "Here is the current screen capture."
+        prompt = (
+            user_text.strip()
+            if user_text and user_text.strip()
+            else DEFAULT_USER_PROMPT
         )
         if frame.ocr_text:
             prompt += (
