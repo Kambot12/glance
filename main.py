@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import logging
 import secrets
+import signal
 import threading
 import sys
 from pathlib import Path
@@ -182,6 +183,7 @@ def run_hud(cfg, args) -> int:
     thread-safe by design.
     """
     try:
+        from PyQt6.QtCore import QTimer  # noqa: PLC0415
         from PyQt6.QtWidgets import QApplication  # noqa: PLC0415
     except ImportError:
         print(
@@ -227,6 +229,17 @@ def run_hud(cfg, args) -> int:
             box["rc"] = loop.run_until_complete(task)
         except asyncio.CancelledError:
             box["rc"] = 0
+        except OSError as e:
+            # Almost always "address already in use": another glance is still
+            # running. Without this the server dies, Qt keeps the process
+            # alive, and the user is left with a panel that silently does
+            # nothing.
+            log.error(
+                "could not start the server: %s\n"
+                "Another glance is probably already running - quit it from the "
+                "menu bar, or start this one with --port <other>.", e,
+            )
+            box["rc"] = 1
         except Exception as e:  # noqa: BLE001 - last line before the thread dies
             log.error("%s: %s", type(e).__name__, e)
             box["rc"] = 1
@@ -240,10 +253,29 @@ def run_hud(cfg, args) -> int:
 
     def shutdown() -> None:
         loop, task = box.get("loop"), box.get("task")
-        if loop is not None and task is not None and not task.done():
-            loop.call_soon_threadsafe(task.cancel)
+        if loop is None or task is None or task.done() or loop.is_closed():
+            # The asyncio side may already be gone - it closes its own loop
+            # when run_app returns or fails - and call_soon_threadsafe on a
+            # closed loop raises, turning a clean quit into a traceback.
+            return
+        loop.call_soon_threadsafe(task.cancel)
 
     app.aboutToQuit.connect(shutdown)
+
+    # Qt's run loop does not service Python signal handlers, so a plain
+    # SIGTERM (launchctl bootout, pkill) was being ignored and stale instances
+    # stayed alive holding the port. A timer gives the interpreter a chance to
+    # run the handler.
+    def _on_term(_signum, _frame) -> None:
+        log.info("terminating on signal")
+        app.quit()
+
+    signal.signal(signal.SIGTERM, _on_term)
+    signal.signal(signal.SIGINT, _on_term)
+    wake = QTimer()
+    wake.start(250)
+    wake.timeout.connect(lambda: None)
+
     app.exec()
     thread.join(timeout=5.0)
     return box["rc"]
