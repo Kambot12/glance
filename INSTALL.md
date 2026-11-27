@@ -96,6 +96,26 @@ start it again** after changing anything.
 All of them are `config.yaml`; the modes are just a name, a hotkey and a
 system prompt, so adding your own is three lines.
 
+### The panel and screen recording
+
+By default the panel is kept out of screen recordings and screen shares
+(`hud.hide_from_screen_recording`). On macOS that is `NSWindowSharingNone`,
+the same mechanism 1Password uses to keep a vault out of a recording; on
+Windows `SetWindowDisplayAffinity` does it and cannot do otherwise.
+
+Be clear about what that is and is not. It removes the window's **pixels**
+from captures made by other software. It does **not** hide glance from:
+
+- the window list — `CGWindowListCopyWindowInfo` still enumerates it, with no
+  permissions required
+- the process list — plain `ps` shows `glance.app/Contents/MacOS/glance`
+- the port it listens on — `127.0.0.1:8765`
+- the files on disk — `glance.app` and its LaunchAgent plist
+
+So it is a privacy feature for your own recordings, not concealment. Any
+software installed specifically to inspect the machine finds glance
+immediately, by any of the four signals above.
+
 ### The panel
 
 It rests at **28% opacity** so it does not sit in front of what you are

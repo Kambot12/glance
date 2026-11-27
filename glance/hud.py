@@ -148,6 +148,10 @@ def apply_native_window_behaviour(widget: QWidget) -> int | None:
             | NSWindowCollectionBehaviorIgnoresCycle
         )
         nswindow.setLevel_(int(os.environ.get("GLANCE_HUD_LEVEL", WINDOW_LEVEL)))
+        if getattr(widget, "_hide_from_recording", False):
+            from AppKit import NSWindowSharingNone  # noqa: PLC0415
+
+            nswindow.setSharingType_(NSWindowSharingNone)
         # Keep the panel from dimming when another app takes focus.
         nswindow.setHidesOnDeactivate_(False)
         return int(nswindow.windowNumber())
@@ -205,11 +209,13 @@ class Hud(QWidget):
         opacity: float = 0.28,
         opacity_active: float = 0.97,
         toggle_hotkey: str = "",
+        hide_from_recording: bool = True,
     ):
         super().__init__()
         self._submit = submit
         self._modes = list(modes)
         self._toggle_hotkey = toggle_hotkey
+        self._hide_from_recording = hide_from_recording
         self._opacity_rest = opacity
         self._opacity_active = opacity_active
         self._hovered = False
@@ -363,6 +369,11 @@ class Hud(QWidget):
             # start-up was not enough.
             if nswindow.hidesOnDeactivate():
                 nswindow.setHidesOnDeactivate_(False)
+            if self._hide_from_recording:
+                from AppKit import NSWindowSharingNone  # noqa: PLC0415
+
+                if nswindow.sharingType() != NSWindowSharingNone:
+                    nswindow.setSharingType_(NSWindowSharingNone)
             nswindow.orderFrontRegardless()
         except Exception as e:  # pragma: no cover - needs a live window server
             log.debug("could not re-assert top: %s: %s", type(e).__name__, e)

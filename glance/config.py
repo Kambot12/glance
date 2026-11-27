@@ -132,6 +132,17 @@ class HudConfig(Strict):
     opacity_active: float = Field(default=0.97, ge=0.05, le=1.0)
     # Show/hide the panel without touching the mouse.
     toggle_hotkey: str = "<cmd>+<shift>+."
+    # Keep the panel out of screen recordings and screen shares.
+    #
+    # macOS: NSWindowSharingNone - the same mechanism 1Password uses to keep a
+    # vault out of a recording. It removes the window's PIXELS from captures
+    # made by other software; it does not hide the window from the window list
+    # (CGWindowListCopyWindowInfo still enumerates it), from the process list,
+    # or from the port it listens on.
+    #
+    # Windows already behaves this way and cannot do otherwise:
+    # SetWindowDisplayAffinity is system-wide by design.
+    hide_from_screen_recording: bool = True
     # How often to re-assert "stay on top", in seconds; 0 disables it.
     # The window level is set once when the panel is created, so a window made
     # afterwards - a browser opening, an app launching, a Space switch - can

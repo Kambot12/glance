@@ -95,6 +95,10 @@ hud:
   opacity: 0.28
   opacity_active: 0.97
   toggle_hotkey: "<cmd>+<shift>+."
+  # Keep the panel out of screen recordings and screen shares.
+  # Removes its pixels from other apps' captures; it does NOT hide the
+  # window from the window list, the process list, or its open port.
+  hide_from_screen_recording: true
 
 ocr:
   # off      never run OCR

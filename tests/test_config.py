@@ -153,3 +153,15 @@ def test_panel_toggle_cannot_collide_with_a_mode_hotkey():
                               system_prompt="s")],
             hud=HudConfig(toggle_hotkey="<cmd>+<shift>+1"),
         )
+
+
+def test_hide_from_screen_recording_defaults_on():
+    from glance.config import HudConfig
+
+    assert HudConfig().hide_from_screen_recording is True
+
+
+def test_hide_from_screen_recording_can_be_turned_off():
+    from glance.config import HudConfig
+
+    assert HudConfig(hide_from_screen_recording=False).hide_from_screen_recording is False
