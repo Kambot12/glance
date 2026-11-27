@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Overlay detector — can this page see anything on top of it?</title>
+<style>
+  :root{
+    --bg:#0b0d12; --panel:#141821; --line:#232a39; --ink:#e7eaf2; --dim:#8b94a8;
+    --ok:#3ddc97; --bad:#ff6b6b; --warn:#ffcc66; --accent:#7aa2ff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.55 ui-sans-serif,-apple-system,"SF Pro Text",Segoe UI,sans-serif}
+  header{padding:28px 32px 18px;border-bottom:1px solid var(--line)}
+  h1{margin:0 0 6px;font-size:21px;letter-spacing:-.2px}
+  .sub{color:var(--dim);font-size:14px;max-width:70ch}
+  main{padding:22px 32px 60px;max-width:1100px}
+  .bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:18px 0 24px}
+  button{background:var(--accent);color:#07101f;border:0;border-radius:8px;
+         padding:9px 16px;font-weight:650;font-size:14px;cursor:pointer}
+  button.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
+  button:disabled{opacity:.45;cursor:default}
+  table{width:100%;border-collapse:collapse;margin-top:8px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);
+        vertical-align:top;font-size:14px}
+  th{color:var(--dim);font-weight:600;font-size:12px;text-transform:uppercase;
+     letter-spacing:.07em}
+  td.v{font-variant-numeric:tabular-nums;white-space:nowrap}
+  .tag{display:inline-block;padding:2px 9px;border-radius:999px;
+       font-size:12px;font-weight:650}
+  .t-ok{background:rgba(61,220,151,.14);color:var(--ok)}
+  .t-bad{background:rgba(255,107,107,.14);color:var(--bad)}
+  .t-warn{background:rgba(255,204,102,.14);color:var(--warn)}
+  .t-idle{background:rgba(139,148,168,.14);color:var(--dim)}
+  .note{color:var(--dim);font-size:13px;margin-top:4px}
+  #verdict{margin:26px 0 0;padding:18px 20px;border-radius:12px;
+           border:1px solid var(--line);background:var(--panel)}
+  #verdict h2{margin:0 0 6px;font-size:16px}
+  canvas{border:1px solid var(--line);border-radius:8px;margin-top:10px;max-width:100%}
+  .hov{margin-top:16px;padding:22px;border:1px dashed var(--line);border-radius:10px;
+       text-align:center;color:var(--dim)}
+  .hov:hover{border-color:var(--accent);color:var(--ink)}
+  code{background:#1b2130;padding:1px 6px;border-radius:5px;font-size:13px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Overlay detector</h1>
+  <div class="sub">
+    This page tries every signal a browser actually exposes to work out whether
+    something is floating above it, drawing on it, or intercepting its input.
+    Leave it open, move the overlay across it, press its hotkeys, then read the
+    verdict.
+  </div>
+</header>
+<main>
+  <div class="bar">
+    <button id="run">Run passive checks</button>
+    <button id="cap" class="ghost">Run screen-capture check…</button>
+    <button id="send" class="ghost">Send results</button>
+    <span id="clock" class="note"></span>
+  </div>
+
+  <table id="tbl">
+    <thead><tr><th>#</th><th>Signal</th><th>What it would catch</th>
+      <th>Observation</th><th>Result</th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+  <div class="hov" id="hovzone">
+    Hover target — if something opaque sits over this box, the browser still
+    reports hover here, because the page is told about the pointer, not about pixels.
+  </div>
+
+  <div id="verdict"><h2>Verdict</h2><div class="note">Run the checks.</div></div>
+  <canvas id="cv" width="420" height="260" style="display:none"></canvas>
+</main>
+<script>
+const R=[], tb=document.querySelector('#tbl tbody');
+let n=0;
+function row(name, catches, obs, state, note){
+  n++;
+  const cls={ok:'t-ok',bad:'t-bad',warn:'t-warn',idle:'t-idle'}[state];
+  const label={ok:'not detected',bad:'DETECTED',warn:'inconclusive',idle:'watching'}[state];
+  const tr=document.createElement('tr');
+  for(const [txt,c] of [[n,'v'],[name,''],[catches,''],[obs,'v'],['','']]){
+    const td=document.createElement('td'); td.className=c;
+    if(c==='') td.textContent=txt; else td.textContent=txt; tr.appendChild(td);
+  }
+  const tag=document.createElement('span'); tag.className='tag '+cls; tag.textContent=label;
+  tr.lastChild.appendChild(tag);
+  if(note){const d=document.createElement('div');d.className='note';d.textContent=note;tr.children[2].appendChild(d);}
+  tb.appendChild(tr);
+  R.push({n,name,obs:String(obs),state});
+  return tr;
+}
+
+// ---- 1. focus ------------------------------------------------------------
+let blurs=0, lastBlur='never';
+addEventListener('blur',()=>{blurs++;lastBlur=new Date().toLocaleTimeString();});
+addEventListener('focus',()=>{});
+
+// ---- 2. visibility -------------------------------------------------------
+let hides=0;
+document.addEventListener('visibilitychange',()=>{ if(document.hidden) hides++; });
+
+// ---- 3. pointer leaving the document ------------------------------------
+let leaves=0;
+document.addEventListener('mouseleave',()=>leaves++);
+
+// ---- 4. geometry ---------------------------------------------------------
+const g0={ow:outerWidth,oh:outerHeight,iw:innerWidth,ih:innerHeight,
+          sx:screenX,sy:screenY,sw:screen.width,sh:screen.height,
+          aw:screen.availWidth,ah:screen.availHeight,dpr:devicePixelRatio};
+let geomChanges=0;
+setInterval(()=>{
+  const g={ow:outerWidth,oh:outerHeight,iw:innerWidth,ih:innerHeight,
+           sx:screenX,sy:screenY,sw:screen.width,sh:screen.height,
+           aw:screen.availWidth,ah:screen.availHeight,dpr:devicePixelRatio};
+  for(const k in g) if(g[k]!==g0[k]){geomChanges++;break;}
+},500);
+
+// ---- 5. frame-timing jitter (compositor pressure) ------------------------
+let frames=0, worst=0, last=performance.now();
+(function tick(t){ const d=t-last; last=t; if(frames++>5 && d>worst) worst=d;
+  requestAnimationFrame(tick); })(performance.now());
+
+// ---- 6. long tasks -------------------------------------------------------
+let longTasks=0;
+try{ new PerformanceObserver(l=>{longTasks+=l.getEntries().length;})
+     .observe({entryTypes:['longtask']}); }catch(e){}
+
+// ---- 7. keystrokes the page can see --------------------------------------
+const combos=new Set();
+addEventListener('keydown',e=>{
+  if((e.metaKey||e.ctrlKey)&&e.shiftKey){
+    combos.add((e.metaKey?'⌘':'⌃')+'⇧'+(e.key==='.'?'.':e.key.toUpperCase()));
+  }
+},true);
+
+// ---- 8. elementFromPoint occlusion --------------------------------------
+function occluded(){
+  const z=document.getElementById('hovzone').getBoundingClientRect();
+  const el=document.elementFromPoint(z.left+z.width/2, z.top+z.height/2);
+  return el && el.id!=='hovzone' ? el.tagName : 'none';
+}
+
+document.getElementById('run').onclick=()=>{
+  tb.innerHTML=''; R.length=0; n=0;
+  row('window blur / focus','an overlay stealing keyboard focus',
+      blurs+' blur events', blurs?'bad':'ok',
+      'Last: '+lastBlur+'. A panel that never activates never blurs the page.');
+  row('document.hasFocus()','focus held by another window',
+      String(document.hasFocus()), document.hasFocus()?'ok':'bad');
+  row('Page Visibility API','the page being covered or backgrounded',
+      hides+' hidden transitions', hides?'bad':'ok',
+      'Fires for tab switches and minimise — not for a window drawn on top.');
+  row('pointer leaving document','the cursor entering an overlay',
+      leaves+' mouseleave', leaves>3?'warn':'ok',
+      'Also fires at the window edge, so it is noisy rather than conclusive.');
+  row('window + screen geometry','a panel resizing or reserving screen space',
+      geomChanges+' changes', geomChanges?'warn':'ok',
+      'outer/inner size, screenX/Y, screen.avail*, devicePixelRatio.');
+  row('frame-timing jitter','compositor cost of something drawing above',
+      worst.toFixed(1)+' ms worst frame', worst>120?'warn':'ok',
+      'Normal scheduling noise reaches this on its own; weak evidence at best.');
+  row('long tasks','foreign script execution in this page',
+      longTasks+' tasks', longTasks>40?'warn':'ok');
+  row('elementFromPoint','an overlay inside this document',
+      occluded(), occluded()==='none'?'ok':'bad',
+      'Only ever sees this page’s own DOM.');
+  row('hotkey keystrokes','the overlay’s shortcuts being pressed here',
+      combos.size?[...combos].join(' '):'none seen', combos.size?'bad':'ok',
+      'A global hotkey that does not swallow the key is visible to the page.');
+  row('getDisplayMedia','pixels of anything on top, if the user shares',
+      'not run', 'idle', 'Needs explicit permission — use the button.');
+  verdict();
+};
+
+function verdict(){
+  const bad=R.filter(r=>r.state==='bad'), warn=R.filter(r=>r.state==='warn');
+  const v=document.getElementById('verdict');
+  v.innerHTML='<h2>Verdict</h2>';
+  const p=document.createElement('div');
+  if(bad.length){ p.innerHTML='<span class="tag t-bad">DETECTED</span> '+
+      bad.length+' signal(s) fired: '+bad.map(b=>b.name).join(', ')+'.'; }
+  else if(warn.length){ p.innerHTML='<span class="tag t-warn">inconclusive</span> '+
+      'nothing conclusive; '+warn.length+' noisy signal(s) moved.'; }
+  else { p.innerHTML='<span class="tag t-ok">not detected</span> '+
+      'no signal available to this page fired.'; }
+  v.appendChild(p);
+  const why=document.createElement('div'); why.className='note';
+  why.style.marginTop='8px';
+  why.textContent='A page is sandboxed: it is told about its own DOM and its own '+
+    'input, never about other windows on the machine. Screen capture is the one '+
+    'exception, and it needs the user to agree first.';
+  v.appendChild(why);
+}
+
+// ---- screen capture: the one vector that can actually see pixels ---------
+document.getElementById('cap').onclick=async()=>{
+  const cv=document.getElementById('cv'), ctx=cv.getContext('2d');
+  try{
+    const s=await navigator.mediaDevices.getDisplayMedia({video:{frameRate:2}});
+    const v=document.createElement('video'); v.srcObject=s; await v.play();
+    await new Promise(r=>setTimeout(r,1200));
+    cv.style.display='block'; ctx.drawImage(v,0,0,cv.width,cv.height);
+    s.getTracks().forEach(t=>t.stop());
+    const d=ctx.getImageData(0,0,cv.width,cv.height).data;
+    let dark=0; for(let i=0;i<d.length;i+=4){ if(d[i]<60&&d[i+1]<60&&d[i+2]<70) dark++; }
+    const pct=(100*dark/(d.length/4)).toFixed(1);
+    row('getDisplayMedia (captured)','pixels of anything on top',
+        pct+'% dark pixels','warn',
+        'Captured frame drawn below. Look at it: if the panel is in the picture, '+
+        'a page with screen-share permission can see it.');
+    verdict();
+  }catch(e){
+    row('getDisplayMedia','pixels of anything on top','denied: '+e.name,'ok',
+        'Refused, so this vector gives the page nothing.');
+    verdict();
+  }
+};
+
+document.getElementById('send').onclick=()=>{
+  fetch('/results',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({when:new Date().toISOString(),rows:R})})
+    .then(()=>{document.getElementById('clock').textContent='results sent';});
+};
+// Auto mode: let the signals accumulate, then run and report without a click,
+// so the test is reproducible instead of depending on when someone clicks.
+if(new URLSearchParams(location.search).has('auto')){
+  const wait = +(new URLSearchParams(location.search).get('auto')||20);
+  let left = wait;
+  const t=setInterval(()=>{
+    left--;
+    document.title = 'collecting… '+left+'s';
+    if(left<=0){
+      clearInterval(t);
+      document.getElementById('run').click();
+      setTimeout(()=>document.getElementById('send').click(), 600);
+      document.title = 'done';
+    }
+  },1000);
+}
+setInterval(()=>{document.getElementById('clock').textContent=
+  'watching… blur:'+blurs+' hidden:'+hides+' leave:'+leaves+
+  ' geom:'+geomChanges+' keys:'+combos.size;},700);
+</script>
+</body>
+</html>

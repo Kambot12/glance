@@ -1,0 +1,65 @@
+{
+  "when": "2026-11-27T14:07:25.154Z",
+  "rows": [
+    {
+      "n": 1,
+      "name": "window blur / focus",
+      "obs": "0 blur events",
+      "state": "ok"
+    },
+    {
+      "n": 2,
+      "name": "document.hasFocus()",
+      "obs": "true",
+      "state": "ok"
+    },
+    {
+      "n": 3,
+      "name": "Page Visibility API",
+      "obs": "0 hidden transitions",
+      "state": "ok"
+    },
+    {
+      "n": 4,
+      "name": "pointer leaving document",
+      "obs": "0 mouseleave",
+      "state": "ok"
+    },
+    {
+      "n": 5,
+      "name": "window + screen geometry",
+      "obs": "0 changes",
+      "state": "ok"
+    },
+    {
+      "n": 6,
+      "name": "frame-timing jitter",
+      "obs": "13.0 ms worst frame",
+      "state": "ok"
+    },
+    {
+      "n": 7,
+      "name": "long tasks",
+      "obs": "1 tasks",
+      "state": "ok"
+    },
+    {
+      "n": 8,
+      "name": "elementFromPoint",
+      "obs": "none",
+      "state": "ok"
+    },
+    {
+      "n": 9,
+      "name": "hotkey keystrokes",
+      "obs": "none seen",
+      "state": "ok"
+    },
+    {
+      "n": 10,
+      "name": "getDisplayMedia",
+      "obs": "not run",
+      "state": "idle"
+    }
+  ]
+}

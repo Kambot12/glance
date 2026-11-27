@@ -214,6 +214,12 @@ class Hud(QWidget):
         self._opacity_active = opacity_active
         self._hovered = False
         self._streaming = False
+        # What WE want. Qt's isVisible() is not a reliable statement of intent
+        # here: AppKit hides a Qt::Tool window (an NSPanel) whenever the owning
+        # application goes inactive, which for an accessory app is nearly
+        # always. Gating the watchdog on isVisible() therefore made it stand
+        # down at exactly the moment it was needed.
+        self._want_visible = True
         self._drag_from: QPoint | None = None
         self.window_id: int | None = None
 
@@ -240,7 +246,7 @@ class Hud(QWidget):
         self.status = QLabel("ready", objectName="status")
         close = QPushButton("×", objectName="close")
         close.setFixedWidth(26)
-        close.clicked.connect(self.hide)
+        close.clicked.connect(self._hide_by_request)
         close.setToolTip("Hide the panel (hotkeys keep working)")
         head.addWidget(title)
         head.addSpacing(10)
@@ -323,11 +329,15 @@ class Hud(QWidget):
         without activating the application, so the panel never steals focus
         from what the user is typing into.
         """
-        if not IS_MAC or not self.isVisible():
+        if not IS_MAC or not self._want_visible:
             return
         nswindow = getattr(self, "_nswindow", None)
         if nswindow is None:
             return
+        # Put it back if AppKit took it away behind Qt's back.
+        if not self.isVisible():
+            log.debug("panel was hidden while it should be up; restoring")
+            self.show()
         try:
             from AppKit import (  # noqa: PLC0415
                 NSWindowCollectionBehaviorCanJoinAllSpaces,
@@ -347,6 +357,12 @@ class Hud(QWidget):
             level = int(os.environ.get("GLANCE_HUD_LEVEL", WINDOW_LEVEL))
             if nswindow.level() != level:
                 nswindow.setLevel_(level)
+            # The one that actually bit: a Qt::Tool window is an NSPanel, and
+            # an NSPanel hides itself when its application deactivates unless
+            # this is off. Qt re-applies its own value, so setting it once at
+            # start-up was not enough.
+            if nswindow.hidesOnDeactivate():
+                nswindow.setHidesOnDeactivate_(False)
             nswindow.orderFrontRegardless()
         except Exception as e:  # pragma: no cover - needs a live window server
             log.debug("could not re-assert top: %s: %s", type(e).__name__, e)
@@ -361,9 +377,11 @@ class Hud(QWidget):
 
     def toggle_visible(self) -> bool:
         """Show or hide the panel. Returns the new visibility."""
-        if self.isVisible():
+        if self._want_visible and self.isVisible():
+            self._want_visible = False
             self.hide()
             return False
+        self._want_visible = True
         self.reveal()
         return True
 
@@ -432,7 +450,7 @@ class Hud(QWidget):
         m = QMenu(self)
         shortcut = f"\t{_pretty(self._toggle_hotkey)}" if self._toggle_hotkey else ""
         if self.isVisible():
-            m.addAction(f"Hide panel{shortcut}", self.hide)
+            m.addAction(f"Hide panel{shortcut}", self._hide_by_request)
         else:
             m.addAction(f"Show panel{shortcut}", self.reveal)
         m.addSeparator()
@@ -449,7 +467,13 @@ class Hud(QWidget):
         self.reveal()
         self.place_top_centre()
 
+    def _hide_by_request(self) -> None:
+        """Hiding on purpose, so the watchdog must not undo it."""
+        self._want_visible = False
+        self.hide()
+
     def reveal(self) -> None:
+        self._want_visible = True
         self.show()
         self.raise_()
         self._refresh_opacity()
