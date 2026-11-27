@@ -29,6 +29,11 @@ class ModeConfig(Strict):
     name: str = Field(min_length=1)
     hotkey: str
     system_prompt: str = Field(min_length=1)
+    # The user turn sent with the frame. Default is a neutral "here is the
+    # screen", which reads as an invitation to describe it - fine for
+    # summarize, wrong for a mode meant to answer. Set it per mode to say what
+    # is actually being asked for.
+    user_prompt: str | None = None
 
     @field_validator("hotkey")
     @classmethod
@@ -126,7 +131,7 @@ class HudConfig(Strict):
     # a panel you cannot read is not useful.
     opacity_active: float = Field(default=0.97, ge=0.05, le=1.0)
     # Show/hide the panel without touching the mouse.
-    toggle_hotkey: str = "<cmd>+<shift>+\\"
+    toggle_hotkey: str = "<cmd>+<shift>+."
 
     @field_validator("toggle_hotkey")
     @classmethod

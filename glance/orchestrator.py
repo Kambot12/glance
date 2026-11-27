@@ -256,7 +256,10 @@ class Orchestrator:
         await self._stream(
             frame, mode.name, label=f"{mode.name}{' · watch' if watch else ''}",
             question=f"[{mode.name}] describe the current screen",
-            user_text=None,  # the mode's system prompt drives an unprompted capture
+            # A mode may state its own ask. Without one the processor falls
+            # back to a neutral "here is the screen", which nudges the model
+            # towards describing rather than answering.
+            user_text=mode.user_prompt,
         )
 
     async def _run_followup(self, text: str) -> None:

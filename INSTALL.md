@@ -87,11 +87,11 @@ start it again** after changing anything.
 | Hotkey | Does |
 |---|---|
 | **⌘⇧1** | summarize what is on screen |
-| **⌘⇧2** | **solve** — answer the question or problem on screen |
+| **⌘⇧2** | **solve** — answers the question on screen, answer only |
 | **⌘⇧3** | explain the code on screen |
 | **⌘⇧4** | read a dashboard or chart |
 | **⌘⇧0** | pause / resume |
-| **⌘⇧\** | show / hide the panel |
+| **⌘⇧.** | show / hide the panel |
 
 All of them are `config.yaml`; the modes are just a name, a hotkey and a
 system prompt, so adding your own is three lines.

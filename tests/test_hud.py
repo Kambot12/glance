@@ -33,7 +33,7 @@ def hud(qapp):
         sent.append,
         opacity=0.28,
         opacity_active=0.97,
-        toggle_hotkey="<cmd>+<shift>+\\",
+        toggle_hotkey="<cmd>+<shift>+.",
     )
     w._sent = sent
     yield w
