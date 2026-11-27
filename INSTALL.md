@@ -6,6 +6,10 @@ streams the answer back to a floating panel and a local web page.
 It is developed and verified on **macOS 27.2 (arm64), Python 3.13**. Windows
 support is written but not yet run on Windows — see [Windows](#windows).
 
+If something behaves strangely rather than simply failing, check
+[NOTES.md](NOTES.md) first: it collects the failures that cost real time,
+and several of them present as something other than what they are.
+
 ---
 
 ## macOS
@@ -253,3 +257,8 @@ and port availability — each failure with its exact fix.
 | Panel not over a fullscreen app | should not happen — glance runs as an accessory app for this; please report |
 | Captures are blank/black | Screen Recording granted to your terminal, not to `glance.app` |
 | Panel appears in its own captures | ScreenCaptureKit missing: `uv sync --extra sck` |
+| Panel vanishes when another app is focused | should not happen — the watchdog re-asserts it; please report |
+| Captures fail after a reboot | the model endpoint is not up: `scripts/launch_agent.py install --service ollama` |
+| glance does not start at login | check both agents with `scripts/launch_agent.py status` and `--service ollama` |
+
+Deeper background for any of these is in [NOTES.md](NOTES.md).

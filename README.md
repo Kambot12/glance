@@ -4,8 +4,13 @@ Hotkey → screen capture → vision model → streaming local web view, with an
 always-on-top panel that stays out of its own captures.
 Built and verified on **macOS 27.2 (arm64), Python 3.13**.
 
-**Installing?** See [INSTALL.md](INSTALL.md) — app bundle, login agent,
+**Installing?** See [INSTALL.md](INSTALL.md) — app bundle, login agents,
 permissions, and the Windows plan.
+
+**Extending it, or debugging something strange?** See [NOTES.md](NOTES.md) —
+every failure that cost real time, with the symptom that was visible, what was
+actually causing it, and how it was confirmed. Most of them looked like one
+thing and were another.
 
 ## Quick start
 
@@ -90,6 +95,9 @@ blocked the entire headless path.
    full-display capture picks up a password manager parked in a corner.
 
 ## Platform notes
+
+The short version is below; [NOTES.md](NOTES.md) has the full account,
+including the ones that are only reachable once an earlier bug is fixed.
 
 - **macOS** — hotkeys need Accessibility, checked with `AXIsProcessTrusted()`;
   a missing grant only warns, since `--no-hotkeys` exists.
