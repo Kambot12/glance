@@ -12,6 +12,60 @@ and several of them present as something other than what they are.
 
 ---
 
+## What it needs
+
+glance itself is negligible — **60 MB** resident and a few hundred KB of
+Python. Essentially all of the requirement is the model you point it at.
+
+### If you run the model locally (the default)
+
+Measured on a MacBook Pro M1 Pro, 16 GB, running `qwen3-vl:8b`:
+
+| | |
+|---|---|
+| Model on disk | **6.2 GB** (8.2B params, Q4_K_M) |
+| Peak RAM while answering | **6.1 GB** |
+| glance's own RSS | 0.06 GB |
+| One capture → full answer | **~60 s** |
+
+The first capture after a cold start is slower, because the model has to be
+read into memory before any tokens appear.
+
+Rough guidance:
+
+| Your RAM | Workable |
+|---|---|
+| 8 GB | a 3B model (`llama3.2` is 2.0 GB) — an 8B will swap and crawl |
+| 16 GB | 8B comfortably, which is what this is tuned for |
+| 32 GB+ | larger vision models, longer history |
+
+**It must be a vision model.** `llama3.1:8b` and `deepseek-r1:8b` cannot see
+images at all; they will fail or hallucinate. Vision-capable options include
+`qwen3-vl` (any size), `llava`, `llama3.2-vision` and `minicpm-v`.
+
+On Apple Silicon the GPU is used through Metal automatically and shares system
+memory, so the RAM figure above is the whole story. On a PC with a discrete
+GPU, the model wants that much **VRAM** to run on the GPU; with less it falls
+back to CPU and gets much slower.
+
+### If you use a cloud model instead
+
+Point `provider.base_url` at a hosted endpoint and the local requirement
+disappears — nothing but glance runs on your machine. The trade is absolute:
+**every captured frame leaves your machine** and goes to that vendor, and you
+pay per image. The local default exists so neither of those is true.
+
+### Everything else
+
+- **macOS 14+** for ScreenCaptureKit and the `--hud` panel. The portable
+  `--source screen` path works on older macOS.
+- **Python 3.11–3.14**, a framework build (python.org or `uv python install`);
+  `scripts/build_app.py` needs its `python-config` to build the launcher.
+- **Xcode Command Line Tools** (`xcode-select --install`) — only to build the
+  app bundle, not to run from source.
+- **Disk**: ~1.2 GB for the virtualenv (PyQt6 and onnxruntime dominate), plus
+  the model.
+
 ## macOS
 
 ### 1. From source (recommended first run)

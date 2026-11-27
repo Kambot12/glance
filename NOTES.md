@@ -8,6 +8,11 @@ reachable once an earlier one was fixed.
 If you are extending glance, skim the headings. If you are debugging something
 strange, the symptom you are seeing is probably one of these.
 
+Everything up to [Windows](#windows) was measured on **macOS 27.2 (arm64),
+Python 3.13**. The Windows section is marked separately because it is written
+from the documented API and has never been run — it is kept apart rather than
+blended in, so nothing there reads as verified when it is not.
+
 ---
 
 ## macOS permissions
@@ -314,6 +319,92 @@ captures. Measured: an ordinary capture and one that explicitly excludes the
 panel differ by **0.00** over the panel's rect. It does not hide glance from
 any of the four signals above. It is a privacy feature for your own
 recordings, not concealment.
+
+---
+
+## Windows
+
+> Everything above was measured on macOS 27.2 (arm64). This section is
+> different in kind: `glance/platform_win.py` is written against the
+> documented Win32 API and **has never been run on Windows**. What follows
+> separates what is structurally true from what still needs checking. Do not
+> read the second list as fact.
+
+### Most of the macOS pain simply does not exist here
+
+- **No permission system for screen capture or input.** There is no TCC
+  equivalent, so there is nothing to grant, nothing to re-grant, and no
+  identity for a grant to attach to. The entire "permissions" and most of the
+  "packaging" sections above are macOS-only problems.
+- **No framework-Python re-exec.** `python.exe` is not a stub that re-execs
+  into an app bundle, so the saga that produced `scripts/launcher.c` has no
+  Windows counterpart. PyInstaller is the ordinary route to an `.exe`.
+- **No Spaces, so no activation-policy trap.** The thing that took longest to
+  diagnose on macOS — floating over fullscreen being an *application*
+  property — has no Windows equivalent.
+- **`Qt::Tool` is not an `NSPanel`.** The hide-on-deactivate behaviour that
+  made the panel vanish is specific to AppKit.
+
+### The one real asymmetry: who does the excluding
+
+|  | macOS | Windows |
+|---|---|---|
+| Who excludes | the **capturer**, per capture | the **window itself**, once |
+| API | `SCContentFilter(display:excludingWindows:)` | `SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)` |
+| Scope | glance's own frames only | **every** capture on the system |
+
+This is not a setting, it is the shape of the API. On macOS the panel is
+absent from glance's frames and visible to Zoom and OBS unless you opt in with
+`hud.hide_from_screen_recording`. On Windows there is no per-capture
+exclusion: keeping the panel out of glance's own captures necessarily keeps it
+out of screen sharing and screenshots too.
+
+`WDA_EXCLUDEFROMCAPTURE` needs **Windows 10 2004 (build 19041)** or newer.
+glance refuses to fall back to `WDA_MONITOR` on older builds, because that
+blacks the window out *on screen* rather than removing it from the capture —
+visibly worse than doing nothing. It logs and leaves the panel visible
+instead.
+
+### Known gaps, not yet solved
+
+- **Virtual desktops.** There is no `NSWindowCollectionBehaviorCanJoinAllSpaces`
+  equivalent. A window belongs to the desktop it was created on. Pinning
+  across desktops needs the undocumented `IVirtualDesktopManagerInternal` COM
+  interface, whose GUIDs change between Windows builds — deliberately not
+  chased.
+- **Autostart** is a `shell:startup` shortcut or an
+  `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` entry.
+  `scripts/launch_agent.py` is macOS-only and will not help.
+- **Capture backend.** `dxcam` (DXGI Desktop Duplication) is intended;
+  `uv sync --extra windows`. `mss` also works and is the safer first try.
+- **Code signing.** An unsigned `.exe` triggers SmartScreen. An OV certificate
+  earns reputation slowly; an EV one is immediate and costs roughly $300/yr.
+  As on macOS, building from source avoids the question entirely.
+
+### What to check first, in this order
+
+Each step depends on the one before it, which is the lesson from the macOS
+side — several bugs there were only reachable once an earlier one was fixed.
+
+1. `scripts/doctor.py` runs and the imports resolve.
+2. Headless path: `--source file:assets/sample.png --processor mock`.
+3. Real capture: `--source screen --processor mock`.
+4. Hotkeys fire **by physical keypress** — synthetic ones cannot test this
+   (see above), and the HUD-plus-hotkeys combination is exactly what aborted
+   on macOS, so test them together rather than separately.
+5. Panel floats and stays on top; check it survives another app launching.
+6. `SetWindowDisplayAffinity` returns true **and** the panel is still visible
+   on screen afterwards — verify both, since the failure mode of the older
+   flag is a window that blanks itself.
+7. Record the screen and confirm the panel is absent from the file.
+
+### Smaller things that will differ
+
+- `.venv\Scripts\python.exe`, not `.venv/bin/python`.
+- Ollama on Windows runs as a background application; it has no LaunchAgent to
+  install, so the `--service ollama` command does not apply.
+- `127.0.0.1` binding and the token scheme are unchanged — the server is
+  platform-neutral.
 
 ---
 

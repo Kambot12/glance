@@ -12,6 +12,14 @@ every failure that cost real time, with the symptom that was visible, what was
 actually causing it, and how it was confirmed. Most of them looked like one
 thing and were another.
 
+## What it needs
+
+glance is 60 MB resident; the model is the requirement. Measured on an M1 Pro
+with `qwen3-vl:8b`: **6.2 GB on disk, 6.1 GB peak RAM, ~60 s** per capture.
+8 GB machines want a 3B model instead. It must be a **vision** model —
+`llama3.1` and `deepseek-r1` cannot see images. Full table, including the
+cloud alternative, in [INSTALL.md](INSTALL.md#what-it-needs).
+
 ## Quick start
 
 ```bash
